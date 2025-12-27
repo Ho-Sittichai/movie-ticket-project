@@ -8,11 +8,14 @@ import (
 )
 
 type Config struct {
-	DBURI        string `mapstructure:"DB_URI"`
-	DBName       string `mapstructure:"DB_NAME"`
-	RedisAddr    string `mapstructure:"REDIS_ADDR"`
-	KafkaBrokers string `mapstructure:"KAFKA_BROKERS"`
-	Port         string `mapstructure:"PORT"`
+	DBURI              string `mapstructure:"DB_URI"`
+	DBName             string `mapstructure:"DB_NAME"`
+	RedisAddr          string `mapstructure:"REDIS_ADDR"`
+	KafkaBrokers       string `mapstructure:"KAFKA_BROKERS"`
+	Port               string `mapstructure:"PORT"`
+	GoogleClientID     string `mapstructure:"GOOGLE_CLIENT_ID"`
+	GoogleClientSecret string `mapstructure:"GOOGLE_CLIENT_SECRET"`
+	GoogleRedirectURL  string `mapstructure:"GOOGLE_REDIRECT_URL"`
 }
 
 var AppConfig Config
@@ -23,6 +26,11 @@ func LoadConfig() {
 	viper.SetDefault("DB_NAME", "movie_ticket_db")
 	viper.SetDefault("REDIS_ADDR", "localhost:6379")
 	viper.SetDefault("KAFKA_BROKERS", "localhost:9092")
+	viper.SetDefault("GOOGLE_REDIRECT_URL", "http://localhost:8080/api/auth/google/callback")
+
+	// Load from .env file if it exists
+	viper.SetConfigFile(".env")
+	viper.ReadInConfig()
 
 	viper.AutomaticEnv()
 
@@ -31,17 +39,26 @@ func LoadConfig() {
 	}
 
 	// Manual fallback check
-	if AppConfig.DBURI == "" {
-		AppConfig.DBURI = os.Getenv("DB_URI")
+	// if AppConfig.DBURI == "" {
+	// 	AppConfig.DBURI = os.Getenv("DB_URI")
+	// }
+	// if AppConfig.DBName == "" {
+	// 	AppConfig.DBName = os.Getenv("DB_NAME")
+	// }
+	// if AppConfig.RedisAddr == "" {
+	// 	AppConfig.RedisAddr = os.Getenv("REDIS_ADDR")
+	// }
+	// if AppConfig.KafkaBrokers == "" {
+	// 	AppConfig.KafkaBrokers = os.Getenv("KAFKA_BROKERS")
+	// }
+	if AppConfig.GoogleClientID == "" {
+		AppConfig.GoogleClientID = os.Getenv("GOOGLE_CLIENT_ID")
 	}
-	if AppConfig.DBName == "" {
-		AppConfig.DBName = os.Getenv("DB_NAME")
+	if AppConfig.GoogleClientSecret == "" {
+		AppConfig.GoogleClientSecret = os.Getenv("GOOGLE_CLIENT_SECRET")
 	}
-	if AppConfig.RedisAddr == "" {
-		AppConfig.RedisAddr = os.Getenv("REDIS_ADDR")
-	}
-	if AppConfig.KafkaBrokers == "" {
-		AppConfig.KafkaBrokers = os.Getenv("KAFKA_BROKERS")
+	if AppConfig.GoogleRedirectURL == "" {
+		AppConfig.GoogleRedirectURL = os.Getenv("GOOGLE_REDIRECT_URL")
 	}
 
 	log.Println("Config loaded")

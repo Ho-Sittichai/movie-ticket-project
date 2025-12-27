@@ -24,7 +24,7 @@ services:
     restart: on-failure
 
   # -----------------------------------------------------
-  # Frontend Service (Vue)
+  # Frontend Service (Vue + Nginx)
   # -----------------------------------------------------
   frontend:
     build: 
@@ -32,7 +32,7 @@ services:
       dockerfile: Dockerfile
     container_name: movie-frontend
     ports:
-      - "5173:5173"
+      - "5173:80" # Map host 5173 to container 80 (Nginx)
     depends_on:
       - backend
 

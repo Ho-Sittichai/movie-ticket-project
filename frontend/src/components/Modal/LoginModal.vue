@@ -1,26 +1,47 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useAuthStore } from '../../stores/auth'
-import api from '../../services/api'
+import { useRoute, useRouter } from 'vue-router'
 
 const authStore = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const loading = ref(false)
 
-const handleGoogleLogin = async () => {
-  loading.value = true
-  try {
-    // Simulate Google Login by calling mock API with USER role
-    const res = await api.get(`/auth/login?role=USER`)
-    const { token, user_id, role } = res.data
-    
-    authStore.login({ id: user_id, role }, token)
-  } catch (error) {
-    console.error("Login failed", error)
-    alert("Login failed")
-  } finally {
-    loading.value = false
-  }
+const handleGoogleLogin = () => {
+   loading.value = true
+   window.location.href = "http://localhost:8080/api/auth/google/login"
 }
+
+
+watch(() => route.query.google_auth, (newVal) => {
+  if (newVal === 'success') {
+    const { token, user_id, role, name, picture, email } = route.query
+    
+    if (token && user_id) {
+        console.group("🎉 Login Logic (via LoginModal)")
+        console.table({
+            "Name": name,
+            "Email": email,
+            "ID": user_id,
+            "Place": "LoginModal.vue - Watcher"
+        })
+        console.groupEnd()
+
+        authStore.login({ 
+            user_id: user_id as string, 
+            role: (role as string) || 'USER',
+            name: name as string,
+            email: email as string,
+            picture: picture as string
+        }, token as string)
+        
+        // Remove params from URL
+        const path = route.path
+        router.replace({ path })
+    }
+  }
+}, { immediate: true })
 </script>
 
 <template>

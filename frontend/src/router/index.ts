@@ -1,7 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
-import LoginView from '../views/LoginView.vue'
 import BookingView from '../views/BookingView.vue'
+
+import { useAuthStore } from '../stores/auth'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -12,16 +13,19 @@ const router = createRouter({
       component: HomeView
     },
     {
-      path: '/login',
-      name: 'login',
-      component: LoginView
-    },
-    {
-      path: '/booking/:id',
+      path: '/booking/:movieId',
       name: 'booking',
       component: BookingView
     }
   ]
+})
+
+// Global Auth Guard
+router.beforeEach((to, from, next) => {
+  const authStore = useAuthStore()
+  // Check auth validity on every navigation
+  authStore.checkSession()
+  next()
 })
 
 export default router

@@ -14,18 +14,22 @@ const (
 )
 
 type User struct {
-	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Email     string             `bson:"email" json:"email"`
-	Role      Role               `bson:"role" json:"role"`
-	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
-	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
+	ID         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Email      string             `bson:"email" json:"email"`
+	Name       string             `bson:"name" json:"name"`
+	PictureURL string             `bson:"picture_url" json:"picture_url"`
+	Role       Role               `bson:"role" json:"role"`
+	CreatedAt  time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt  time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
 type Movie struct {
 	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Title       string             `bson:"title" json:"title"`
 	Description string             `bson:"description" json:"description"`
+	Genre       string             `bson:"genre" json:"genre"`
 	DurationMin int                `bson:"duration_min" json:"duration_min"`
+	PosterURL   string             `bson:"poster_url" json:"poster_url"`
 	Screenings  []Screening        `bson:"screenings" json:"screenings"`
 }
 

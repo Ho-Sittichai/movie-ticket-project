@@ -36,13 +36,15 @@ const fetchScreening = async () => {
     loading.value = true
     // initSkeleton() // Reset to skeleton on refetch
     
-    const screeningId = route.params.id as string
-    console.log("Fetching screening:", screeningId)
-    
-    // Artificial Delay for smooth skeleton (optional, can remove)
-    await new Promise(r => setTimeout(r, 800)) 
+    const movieId = route.params.movieId as string
+    const startTime = route.query.time as string // Passed as query
+    console.log("Fetching screening for movie:", movieId, "at time:", startTime)
 
-    const res = await api.get(`/screenings/${screeningId}`)
+    // POST Request with object
+    const res = await api.post(`/screenings/details`, {
+      movie_id: movieId,
+      start_time: startTime
+    })
     const data = res.data
     
     const screeningData = data.screening || data
