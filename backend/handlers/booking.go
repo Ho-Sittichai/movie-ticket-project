@@ -118,24 +118,56 @@ func LockSeat(c *gin.Context) {
 
 	// 2. Lock Redis
 	lockService := services.NewLockService()
+
+	// Check if already locked
+	isLocked, holderID := lockService.IsSeatLocked(screeningID, req.SeatID)
+
+	if isLocked {
+		if holderID == req.UserID {
+			// Same user -> Unlock (Toggle)
+			err := lockService.UnlockSeat(screeningID, req.SeatID)
+			if err != nil {
+				c.JSON(500, gin.H{"error": "Failed to unlock"})
+				return
+			}
+
+			// WS Broadcast UNLOCK
+			services.WSHub.Broadcast <- services.SeatUpdateMessage{
+				ScreeningID: screeningID, // Internal ID used for WS room/topic
+				SeatID:      req.SeatID,
+				Status:      "AVAILABLE",
+			}
+
+			c.JSON(200, gin.H{"message": "Seat unlocked", "status": "AVAILABLE"})
+			return
+		} else {
+			// Different user -> Conflict
+			c.JSON(409, gin.H{"error": "Seat is currently selected by another user"})
+			return
+		}
+	}
+
+	// Not locked -> Lock it
 	locked, err := lockService.LockSeat(screeningID, req.SeatID, req.UserID, 5*time.Minute)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Redis error"})
 		return
 	}
 	if !locked {
+		// Should have been caught by IsSeatLocked, but double check race condition
 		c.JSON(409, gin.H{"error": "Seat is currently selected"})
 		return
 	}
 
-	// WS Broadcast
+	// WS Broadcast LOCK
 	services.WSHub.Broadcast <- services.SeatUpdateMessage{
-		ScreeningID: screeningID, // Internal ID used for WS room/topic
+		ScreeningID: screeningID,
 		SeatID:      req.SeatID,
+		UserID:      req.UserID,
 		Status:      "LOCKED",
 	}
 
-	c.JSON(200, gin.H{"message": "Seat locked"})
+	c.JSON(200, gin.H{"message": "Seat locked", "status": "LOCKED"})
 }
 
 func BookSeat(c *gin.Context) {
@@ -219,6 +251,13 @@ func BookSeat(c *gin.Context) {
 	lockService.UnlockSeat(screeningID, req.SeatID)
 
 	services.GetQueueService().PublishEvent("BOOKING_SUCCESS", booking)
+
+	// WS Broadcast
+	services.WSHub.Broadcast <- services.SeatUpdateMessage{
+		ScreeningID: screeningID,
+		SeatID:      req.SeatID,
+		Status:      "BOOKED",
+	}
 
 	c.JSON(200, gin.H{"message": "Booking Success", "booking_id": booking.ID})
 }

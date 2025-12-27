@@ -90,23 +90,132 @@ onMounted(() => {
 const selectedSeats = computed(() => seats.value.filter(s => s.status === 'SELECTED'))
 const totalPrice = computed(() => selectedSeats.value.length * movie.value.price)
 
-const toggleSeat = (seat: any) => {
-  if (seat.status === 'LOADING' || seat.status === 'BOOKED' || seat.status === 'LOCKED') return
+const toggleSeat = async (seat: any) => {
+  if (seat.status === 'BOOKED' || seat.status === 'LOCKED' || seat.status === 'LOADING') return
   
-  if (seat.status === 'SELECTED') {
-    seat.status = 'AVAILABLE'
-  } else {
-    seat.status = 'SELECTED'
+  // Previously we returned here if SELECTED. Now we proceed to call API to unlock.
+  
+  // Note: We need UserID context. For now, assume authStore has it. 
+  // If not logged in, prompt login
+  if (!authStore.user) {
+      authStore.openLoginModal()
+      return
+  }
+
+  try {
+    const originalStatus = seat.status
+    seat.status = 'LOADING' // Optimistic UI
+    
+    const movieId = route.params.movieId as string
+    const startTime = route.query.time as string
+    
+    const res = await api.post('/seats/lock', {
+      user_id: authStore.user.user_id, // Ensure this matches Store structure
+      movie_id: movieId,
+      start_time: startTime,
+      seat_id: seat.id
+    })
+
+    if (res.status === 200) {
+       // Backend returns "status": "LOCKED" or "AVAILABLE"
+       if (res.data.status === 'LOCKED') {
+          seat.status = 'SELECTED'
+       } else if (res.data.status === 'AVAILABLE') {
+          seat.status = 'AVAILABLE'
+       }
+    } else {
+       seat.status = originalStatus // Revert
+       alert("Failed to update seat")
+    }
+  } catch (e: any) {
+    console.error("Lock error", e)
+    seat.status = 'AVAILABLE' // Simplify revert
+    if (e.response && e.response.status === 409) {
+      alert("Seat is already taken by another user!")
+    } else {
+      alert("Error updating seat")
+    }
   }
 }
 
-const confirmBooking = () => {
+// WebSocket Connection
+const connectWS = () => {
+   const ws = new WebSocket('ws://localhost:8080/api/ws')
+   
+   ws.onopen = () => {
+     console.log('WS Connected')
+   }
+   
+   ws.onmessage = (event) => {
+     try {
+       const msg = JSON.parse(event.data)
+       // Check if message belongs to current screening? 
+       // In production, we should filter on Backend or here. 
+       // For now, simple check: seat_id exists in our map
+       
+       const targetSeat = seats.value.find(s => s.id === msg.seat_id)
+       if (targetSeat) {
+          
+          if (msg.status === 'LOCKED') {
+             // If I am the one locking it (check ID), show as SELECTED so I can toggle it off involved
+             if (authStore.user && msg.user_id === authStore.user.user_id) {
+                targetSeat.status = 'SELECTED'
+             } else {
+                targetSeat.status = 'LOCKED'
+             }
+          } else if (msg.status === 'BOOKED') {
+             targetSeat.status = 'BOOKED'
+          } else if (msg.status === 'AVAILABLE') {
+             targetSeat.status = 'AVAILABLE'
+          }
+       }
+     } catch (e) {
+       console.error("WS Parse error", e)
+     }
+   }
+   
+   ws.onclose = () => {
+     console.log('WS Disconnected')
+     // Auto reconnect?
+     setTimeout(connectWS, 3000)
+   }
+}
+
+onMounted(() => {
+  fetchScreening()
+  connectWS()
+})
+
+const confirmBooking = async () => {
   if (!authStore.user) {
     authStore.openLoginModal()
     return
   }
-  // TODO: Call API to Book
-  alert(`Booking Feature coming next!\nAmount: ${totalPrice.value} THB`)
+  
+  if (selectedSeats.value.length === 0) return
+
+  // Book all selected
+  const seatToBook = selectedSeats.value[0]
+  
+  try {
+     const movieId = route.params.movieId as string
+     const startTime = route.query.time as string
+     
+     const res = await api.post('/seats/book', {
+       user_id: authStore.user.user_id,
+       movie_id: movieId,
+       start_time: startTime,
+       seat_id: seatToBook.id
+     })
+     
+     if (res.status === 200) {
+       alert("Booking Success!")
+       seatToBook.status = 'BOOKED'
+     }
+  } catch (e) {
+    console.error("Booking failed", e)
+    alert("Booking Failed")
+  }
 }
 </script>
 
