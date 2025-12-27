@@ -9,7 +9,7 @@ import LoginModal from './components/Modal/LoginModal.vue'
   <div class="min-h-screen flex flex-col">
     <NavBar />
     
-    <main class="flex-grow pt-20">
+    <main class="flex-grow pt-12">
       <RouterView />
     </main>
 

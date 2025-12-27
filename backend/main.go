@@ -7,6 +7,7 @@ import (
 	"movie-ticket-backend/config"
 	"movie-ticket-backend/database"
 	"movie-ticket-backend/handlers"
+	"movie-ticket-backend/middleware"
 	"movie-ticket-backend/models"
 	"movie-ticket-backend/services"
 	"time"
@@ -56,6 +57,13 @@ func main() {
 		// api.POST("/seats/unlock", handlers.UnlockSeat) // Implement if needed
 
 		api.GET("/ws", services.ServeWS)
+	}
+
+	// Admin API Group (Protected)
+	adminAPI := r.Group("/api/admin")
+	adminAPI.Use(middleware.AdminAuth())
+	{
+		adminAPI.GET("/bookings", handlers.GetAllBookings)
 	}
 
 	r.Run(":" + config.AppConfig.Port)

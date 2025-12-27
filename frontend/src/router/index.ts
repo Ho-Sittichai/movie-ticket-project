@@ -16,6 +16,12 @@ const router = createRouter({
       path: '/booking/:movieId',
       name: 'booking',
       component: BookingView
+    },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('../views/AdminDashboard.vue'),
+      meta: { requiresAdmin: true }
     }
   ]
 })
@@ -23,8 +29,24 @@ const router = createRouter({
 // Global Auth Guard
 router.beforeEach((to, from, next) => {
   const authStore = useAuthStore()
-  // Check auth validity on every navigation
+  // Check session
   authStore.checkSession()
+  
+  // 1. Check if route requires auth
+  if (to.meta.requiresAdmin) {
+    // Check if user is logged in
+    if (!authStore.user || !authStore.token) {
+      next('/') // Not logged in -> Home (or login)
+      return
+    }
+    // Check role
+    if (authStore.user.role !== 'ADMIN') {
+      alert("Access Denied: Admins only")
+      next('/') // Wrong role -> Home
+      return
+    }
+  }
+
   next()
 })
 

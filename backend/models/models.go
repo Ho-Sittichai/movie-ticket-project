@@ -37,7 +37,7 @@ type Screening struct {
 	ID        string    `bson:"id" json:"id"` // Unique ID generator needed or use UUID
 	StartTime time.Time `bson:"start_time" json:"start_time"`
 	Price     float64   `bson:"price" json:"price"`
-	Seats     []Seat    `bson:"seats" json:"seats"`
+	Seats     []Seat    `bson:"seats" json:"seats,omitempty"`
 }
 
 type SeatStatus string
