@@ -29,6 +29,10 @@ func main() {
 	services.InitQueueService() // Kafka
 	services.InitWSHub()
 
+	// Start Redis Expiration Listener
+	lockService := services.NewLockService()
+	go lockService.ListenForExpireRedis()
+
 	// Seed Data (if needed)
 	if database.Mongo != nil {
 		SeedData()

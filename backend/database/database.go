@@ -45,5 +45,7 @@ func ConnectDB() {
 		log.Printf("Failed to connect to Redis: %v", err)
 	} else {
 		log.Println("Connected to Redis successfully")
+		// Enable keyspace notifications for expired events
+		RDB.ConfigSet(context.Background(), "notify-keyspace-events", "Ex")
 	}
 }

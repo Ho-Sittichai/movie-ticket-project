@@ -25,7 +25,7 @@ func (s *LockService) LockSeat(screeningID, seatID, userID string, duration time
 	key := fmt.Sprintf("lock:screening:%s:seat:%s", screeningID, seatID)
 
 	// Value คือ UserID เพื่อบอกว่าใคร Lock
-	success, err := s.RDB.SetNX(ctx, key, userID, duration).Result()
+	success, err := s.RDB.SetNX(ctx, key, userID, duration).Result() // SetNX for Set if Not Exists
 	if err != nil {
 		return false, err
 	}
@@ -87,4 +87,67 @@ func (s *LockService) GetLockedSeats(screeningID string) ([]string, error) {
 	}
 
 	return lockedSeatIDs, nil
+}
+
+// ListenForExpireRedis คอยฟัง Event ตอน Key หมดอายุ
+func (s *LockService) ListenForExpireRedis() {
+	ctx := context.Background()
+	pubsub := s.RDB.Subscribe(ctx, "__keyevent@0__:expired")
+
+	fmt.Println("Redis Expiration Listener started...")
+
+	ch := pubsub.Channel()
+	for msg := range ch {
+		key := msg.Payload
+		// Format: lock:screening:SCR_ID:seat:SEAT_ID
+		var scrID, seatID string
+		_, _ = fmt.Sscanf(key, "lock:screening:%s:seat:%s", &scrID, &seatID)
+
+		// Note: Sscanf might fail with %s if no separators.
+		// Manual parse for safety:
+		// lock:screening:s1:seat:A1
+		var prefix = "lock:screening:"
+		var midPart = ":seat:"
+
+		if len(key) > len(prefix) && contains(key, midPart) {
+			parts := split(key, ":")
+			if len(parts) >= 5 {
+				scrID = parts[2]
+				seatID = parts[4]
+
+				fmt.Printf("Key Expired! Screening: %s, Seat: %s. Broadcasting unlock...\n", scrID, seatID)
+
+				// WS Broadcast UNLOCK
+				WSHub.Broadcast <- SeatUpdateMessage{
+					ScreeningID: scrID,
+					SeatID:      seatID,
+					Status:      "AVAILABLE",
+				}
+			}
+		}
+	}
+}
+
+// Simple helpers because we are in services package
+func contains(s, substr string) bool {
+	for i := 0; i < len(s)-len(substr)+1; i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func split(s, sep string) []string {
+	var result []string
+	start := 0
+	for i := 0; i < len(s)-len(sep)+1; i++ {
+		if s[i:i+len(sep)] == sep {
+			result = append(result, s[start:i])
+			start = i + len(sep)
+			i = start - 1
+		}
+	}
+	result = append(result, s[start:])
+	return result
 }
