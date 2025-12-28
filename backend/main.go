@@ -56,8 +56,13 @@ func main() {
 		api.POST("/movies", handlers.CreateMovie)
 		api.POST("/screenings/details", handlers.GetScreeningDetails)
 
-		api.POST("/seats/lock", handlers.LockSeat)
-		api.POST("/seats/book", handlers.BookSeat)
+		// Protected Booking Routes
+		bookingGroup := api.Group("/seats")
+		bookingGroup.Use(middleware.RequireAuth())
+		{
+			bookingGroup.POST("/lock", handlers.LockSeat)
+			bookingGroup.POST("/book", handlers.BookSeat)
+		}
 		// api.POST("/seats/unlock", handlers.UnlockSeat) // Implement if needed
 
 		api.GET("/ws", services.ServeWS)

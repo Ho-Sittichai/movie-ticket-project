@@ -95,8 +95,16 @@ func GetScreeningDetails(c *gin.Context) {
 }
 
 func LockSeat(c *gin.Context) {
+	// Get trusted UserID from Context
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	UserID := userID.(string)
+
 	var req struct {
-		UserID    string `json:"user_id"`
+		// UserID    string `json:"user_id"` // REMOVED: Use Trusted UserID
 		MovieID   string `json:"movie_id"`
 		StartTime string `json:"start_time"`
 		SeatID    string `json:"seat_id"`
@@ -120,7 +128,7 @@ func LockSeat(c *gin.Context) {
 	isLocked, holderID := lockService.IsSeatLocked(screeningID, req.SeatID)
 
 	if isLocked {
-		if holderID == req.UserID {
+		if holderID == UserID {
 			// Same user -> Unlock (Toggle)
 			err := lockService.UnlockSeat(screeningID, req.SeatID)
 			if err != nil {
@@ -145,7 +153,7 @@ func LockSeat(c *gin.Context) {
 	}
 
 	// Not locked -> Lock it
-	locked, err := lockService.LockSeat(screeningID, req.SeatID, req.UserID, 5*time.Minute)
+	locked, err := lockService.LockSeat(screeningID, req.SeatID, UserID, 5*time.Minute)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Redis error"})
 		return
@@ -160,7 +168,7 @@ func LockSeat(c *gin.Context) {
 	services.WSHub.Broadcast <- services.SeatUpdateMessage{
 		ScreeningID: screeningID,
 		SeatID:      req.SeatID,
-		UserID:      req.UserID,
+		UserID:      UserID,
 		Status:      "LOCKED",
 	}
 
@@ -168,8 +176,15 @@ func LockSeat(c *gin.Context) {
 }
 
 func BookSeat(c *gin.Context) {
+	// Get trusted UserID from Context
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	UserID := userID.(string)
+
 	var req struct {
-		UserID    string `json:"user_id"`
 		MovieID   string `json:"movie_id"`
 		StartTime string `json:"start_time"`
 		SeatID    string `json:"seat_id"`
@@ -188,7 +203,7 @@ func BookSeat(c *gin.Context) {
 
 	lockService := services.NewLockService()
 	locked, holder := lockService.IsSeatLocked(screeningID, req.SeatID)
-	if !locked || holder != req.UserID {
+	if !locked || holder != UserID {
 		c.JSON(400, gin.H{"error": "Lock expired or invalid"})
 		return
 	}
@@ -236,7 +251,7 @@ func BookSeat(c *gin.Context) {
 	// Generate Booking Record
 	booking := models.Booking{
 		ID:          primitive.NewObjectID(),
-		UserID:      req.UserID,
+		UserID:      UserID, // Use trusted ID
 		ScreeningID: screeningID,
 		SeatID:      req.SeatID,
 		Status:      "SUCCESS",

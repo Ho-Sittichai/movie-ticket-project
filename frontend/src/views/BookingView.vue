@@ -77,12 +77,24 @@ const fetchScreening = async () => {
     ).sort() as string[];
     rows.value = uniqueRows;
 
-    seats.value = rawSeats.map((s: any) => ({
-      id: s.id,
-      row: s.row,
-      number: s.number,
-      status: s.status,
-    }));
+    seats.value = rawSeats.map((s: any) => {
+      let status = s.status;
+      // If locked by ME, show as SELECTED
+      if (
+        status === "LOCKED" &&
+        authStore.user &&
+        s.locked_by === authStore.user.user_id
+      ) {
+        status = "SELECTED";
+      }
+      return {
+        id: s.id,
+        row: s.row,
+        number: s.number,
+        status: status,
+        locked_by: s.locked_by, // Store it just in case
+      };
+    });
   } catch (error) {
     console.error("Failed to fetch screening:", error);
     // Keep skeleton/seats visible for a moment, then show error
@@ -107,6 +119,9 @@ const totalPrice = computed(
 );
 
 const toggleSeat = async (seat: any) => {
+  // If it's effectively LOCKED by someone else, we can't touch it.
+  // But if we mapped it to "SELECTED" above, we CAN touch it.
+  // So we only block if status is "LOCKED" (meaning locked by others) or "BOOKED" or "LOADING"
   if (
     seat.status === "BOOKED" ||
     seat.status === "LOCKED" ||
