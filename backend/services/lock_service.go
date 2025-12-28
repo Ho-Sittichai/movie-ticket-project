@@ -68,16 +68,23 @@ func (s *LockService) GetLockedSeats(screeningID string) (map[string]string, err
 		return lockedSeats, nil
 	}
 
-	// Fetch values (UserIDs) for all keys
+	// Fetch all values (UserIDs) associated with these keys
 	values, err := s.RDB.MGet(ctx, keys...).Result()
 	if err != nil {
 		return nil, err
 	}
 
-	prefix := fmt.Sprintf("lock:screening:%s:seat:", screeningID)
 	for i, key := range keys {
+		// Key format: lock:screening:<ScreeningID>:seat:<SeatID>
+		// We know keys matched the pattern, so we can parse carefully or just split
+		// Pattern: lock:screening:%s:seat:*
+
+		// Robust parsing:
+		var prefix = fmt.Sprintf("lock:screening:%s:seat:", screeningID)
 		if len(key) > len(prefix) {
 			seatID := key[len(prefix):]
+
+			// value is interface{}, cast to string
 			if val, ok := values[i].(string); ok {
 				lockedSeats[seatID] = val
 			}

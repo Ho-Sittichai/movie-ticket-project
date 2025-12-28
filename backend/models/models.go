@@ -52,7 +52,7 @@ type Seat struct {
 	Row      string     `bson:"row" json:"row"`
 	Number   int        `bson:"number" json:"number"`
 	Status   SeatStatus `bson:"status" json:"status"`
-	LockedBy string     `bson:"-" json:"locked_by,omitempty"` // Transient field for API response
+	LockedBy string     `bson:"locked_by,omitempty" json:"locked_by,omitempty"`
 }
 
 type Booking struct {

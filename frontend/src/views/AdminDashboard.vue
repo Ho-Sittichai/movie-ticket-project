@@ -255,10 +255,9 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { movieApi, adminApi } from '../services/api'
-// import { useAuthStore } from '../stores/auth' // Removed unused import
+import { useAuthStore } from '../stores/auth'
 
-// const authStore = useAuthStore() // Access Token (Handled by interceptor now)
+const authStore = useAuthStore() // Access Token
 
 interface Booking {
   id: string
@@ -302,8 +301,9 @@ const debounceSearch = () => {
 
 const fetchMovies = async () => {
   try {
-    const res = await movieApi.getAll()
-    movies.value = res.data
+    const res = await fetch('http://localhost:8080/api/movies')
+    const data = await res.json()
+    movies.value = data
   } catch (err) {
     console.error("Failed to load movies", err)
   }
@@ -317,15 +317,22 @@ const fetchBookings = async () => {
     if (filters.value.date) params.append('date', filters.value.date)
     if (filters.value.user) params.append('user', filters.value.user)
 
-    const res = await adminApi.getBookings(filters.value)
+    const res = await fetch(`http://localhost:8080/api/admin/bookings?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${authStore.token}`
+      }
+    })
     
-    bookings.value = res.data || []
-  } catch (err: any) {
-    console.error("Failed to load bookings", err)
-    if (err.response && (err.response.status === 401 || err.response.status === 403)) {
-       alert("Session expired or Unauthorized")
-       window.location.href = '/'
+    if (res.status === 401 || res.status === 403) {
+      alert("Session expired or Unauthorized")
+      window.location.href = '/'
+      return
     }
+    
+    const data = await res.json()
+    bookings.value = data || []
+  } catch (err) {
+    console.error("Failed to load bookings", err)
     bookings.value = []
   } finally {
     loading.value = false
