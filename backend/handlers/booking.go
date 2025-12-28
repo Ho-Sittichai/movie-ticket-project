@@ -185,9 +185,9 @@ func BookSeat(c *gin.Context) {
 	UserID := userID.(string)
 
 	var req struct {
-		MovieID   string `json:"movie_id"`
-		StartTime string `json:"start_time"`
-		SeatID    string `json:"seat_id"`
+		MovieID   string   `json:"movie_id"`
+		StartTime string   `json:"start_time"`
+		SeatIDs   []string `json:"seat_ids"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -202,76 +202,145 @@ func BookSeat(c *gin.Context) {
 	}
 
 	lockService := services.NewLockService()
-	locked, holder := lockService.IsSeatLocked(screeningID, req.SeatID)
-	if !locked || holder != UserID {
-		c.JSON(400, gin.H{"error": "Lock expired or invalid"})
-		return
-	}
-
-	// Update Mongo
-	// Update Screening.Seats[x].Status = "BOOKED"
 	collection := database.Mongo.Collection("movies")
+	bookingCollection := database.Mongo.Collection("bookings")
 
-	// Use array filters to update nested element
-	filter := bson.M{
-		"screenings": bson.M{
-			"$elemMatch": bson.M{
-				"id":           screeningID,
-				"seats.id":     req.SeatID,
-				"seats.status": "AVAILABLE", // Concurrency check
+	bookedCount := 0
+
+	for _, seatID := range req.SeatIDs {
+		// 1. Check Lock
+		locked, holder := lockService.IsSeatLocked(screeningID, seatID)
+		if !locked || holder != UserID {
+			fmt.Printf("Seat %s lock invalid for user %s\n", seatID, UserID)
+			continue // Skip this seat or abort? Skip for partial success preferrable here
+		}
+
+		// 2. Update Mongo (Set Status BOOKED)
+		filter := bson.M{
+			"screenings": bson.M{
+				"$elemMatch": bson.M{
+					"id":           screeningID,
+					"seats.id":     seatID,
+					"seats.status": "AVAILABLE", // Concurrency check
+				},
 			},
-		},
-	}
+		}
 
-	update := bson.M{
-		"$set": bson.M{
-			"screenings.$[scr].seats.$[seat].status": "BOOKED",
-		},
-	}
+		// Note: We use "AVAILABLE" in check, but if it's LOCKED by us, it might be visually "LOCKED" in DB?
+		// Actually, in our logic, status in DB remains "AVAILABLE" until booked. Redis holds the "LOCKED" state.
+		// Wait, did we update DB status to LOCKED?
+		// In LockSeat: c.JSON(200, ... "status": "LOCKED"). Redis is set.
+		// DB status is NOT updated to LOCKED in the current implementation (based on `GetScreeningDetails` merging).
+		// So checking "seats.status": "AVAILABLE" is correct.
 
-	arrayFilters := options.UpdateOptions{
-		ArrayFilters: &options.ArrayFilters{
-			Filters: []interface{}{
-				bson.M{"scr.id": screeningID},
-				bson.M{"seat.id": req.SeatID},
+		update := bson.M{
+			"$set": bson.M{
+				"screenings.$[scr].seats.$[seat].status": "BOOKED",
 			},
-		},
+		}
+
+		arrayFilters := options.UpdateOptions{
+			ArrayFilters: &options.ArrayFilters{
+				Filters: []interface{}{
+					bson.M{"scr.id": screeningID},
+					bson.M{"seat.id": seatID},
+				},
+			},
+		}
+
+		res, err := collection.UpdateOne(context.TODO(), filter, update, &arrayFilters)
+		if err != nil {
+			fmt.Printf("Mongo Update Error for %s: %v\n", seatID, err)
+			continue
+		}
+		if res.ModifiedCount == 0 {
+			// This might happen if DB status turned BOOKED already
+			fmt.Printf("Seat %s update failed (modified 0)\n", seatID)
+			continue
+		}
+
+		// 3. Create Booking Record
+		booking := models.Booking{
+			ID:          primitive.NewObjectID(),
+			UserID:      UserID,
+			ScreeningID: screeningID,
+			SeatID:      seatID,
+			Status:      "SUCCESS",
+			Amount:      120, // Should fetch price from screening
+			CreatedAt:   time.Now(),
+		}
+		bookingCollection.InsertOne(context.TODO(), booking)
+
+		bookedCount++
+
+		// 4. Unlock Redis
+		lockService.UnlockSeat(screeningID, seatID)
+
+		// 5. Events (Async to prevent blocking)
+		go func(sID, stID string, b models.Booking) {
+			services.GetQueueService().PublishEvent("BOOKING_SUCCESS", b)
+			services.WSHub.Broadcast <- services.SeatUpdateMessage{
+				ScreeningID: sID,
+				SeatID:      stID,
+				Status:      "BOOKED",
+			}
+		}(screeningID, seatID, booking)
 	}
 
-	res, err := collection.UpdateOne(context.TODO(), filter, update, &arrayFilters)
+	if bookedCount == 0 {
+		c.JSON(409, gin.H{"error": "Failed to book any seats (locks expired?)"})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Booking Success", "booked_count": bookedCount})
+}
+
+// ExtendSeatLock Handler for batch extension
+func ExtendSeatLock(c *gin.Context) {
+	// Get trusted UserID from Context
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(401, gin.H{"error": "Unauthorized"})
+		return
+	}
+	trustedUserID := userID.(string)
+
+	var req struct {
+		MovieID   string   `json:"movie_id"`
+		StartTime string   `json:"start_time"`
+		SeatIDs   []string `json:"seat_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	screeningID, err := resolveScreeningID(req.MovieID, req.StartTime)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	if res.ModifiedCount == 0 {
-		c.JSON(409, gin.H{"error": "Seat already booked or not found"})
+		c.JSON(404, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Generate Booking Record
-	booking := models.Booking{
-		ID:          primitive.NewObjectID(),
-		UserID:      UserID, // Use trusted ID
-		ScreeningID: screeningID,
-		SeatID:      req.SeatID,
-		Status:      "SUCCESS",
-		Amount:      120,
-		CreatedAt:   time.Now(),
-	}
-	database.Mongo.Collection("bookings").InsertOne(context.TODO(), booking)
+	lockService := services.NewLockService()
+	extendedCount := 0
 
-	lockService.UnlockSeat(screeningID, req.SeatID)
-
-	services.GetQueueService().PublishEvent("BOOKING_SUCCESS", booking)
-
-	// WS Broadcast
-	services.WSHub.Broadcast <- services.SeatUpdateMessage{
-		ScreeningID: screeningID,
-		SeatID:      req.SeatID,
-		Status:      "BOOKED",
+	for _, seatID := range req.SeatIDs {
+		success, err := lockService.ExtendSeatLock(screeningID, seatID, trustedUserID, 5*time.Minute)
+		if err != nil {
+			fmt.Printf("Error extending lock for seat %s: %v\n", seatID, err)
+			continue
+		}
+		if success {
+			extendedCount++
+		}
 	}
 
-	c.JSON(200, gin.H{"message": "Booking Success", "booking_id": booking.ID})
+	if extendedCount == 0 && len(req.SeatIDs) > 0 {
+		c.JSON(409, gin.H{"error": "Failed to extend locks (maybe expired?)"})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Locks extended", "count": extendedCount})
 }
 
 // Helper to find internal Screening ID

@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onUnmounted, watch } from "vue";
 
 const props = defineProps<{
   isOpen: boolean;
   movieTitle: string;
   totalPrice: number;
   selectedSeats: any[];
+  loading?: boolean;
 }>();
 
 const emit = defineEmits(["close", "confirm"]);
 
-const paymentMethod = ref("qr"); // 'qr' | 'credit'
+const paymentMethod = ref("credit"); // 'qr' | 'credit'
 
 // Mock Data for QR
 const qrCodeUrl =
@@ -32,6 +33,46 @@ const displayedSeats = computed(() => {
 const remainingSeatsCount = computed(() => {
   if (props.selectedSeats.length <= 16) return 0;
   return props.selectedSeats.length - MAX_DISPLAY_SEATS;
+});
+
+// Timer Logic
+const timeLeft = ref(300); // 5 minutes in seconds
+let timerInterval: number;
+
+const formattedTime = computed(() => {
+  const m = Math.floor(timeLeft.value / 60);
+  const s = timeLeft.value % 60;
+  return `${m}:${s < 10 ? "0" + s : s}`;
+});
+
+const startTimer = () => {
+  timeLeft.value = 300;
+  clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    if (timeLeft.value > 0) {
+      timeLeft.value--;
+    } else {
+      clearInterval(timerInterval);
+      alert("Payment time expired!");
+      emit("close");
+    }
+  }, 1000);
+};
+
+// Reset timer when modal opens
+watch(
+  () => props.isOpen,
+  (newVal) => {
+    if (newVal) {
+      startTimer();
+    } else {
+      clearInterval(timerInterval);
+    }
+  }
+);
+
+onUnmounted(() => {
+  clearInterval(timerInterval);
 });
 
 const onConfirm = () => {
@@ -62,25 +103,42 @@ const onConfirm = () => {
           <h2 class="text-xl font-bold text-white">Confirm Booking</h2>
           <p class="text-sm text-gray-400">{{ movieTitle }}</p>
         </div>
-        <button
-          @click="$emit('close')"
-          class="text-gray-400 hover:text-white transition-colors"
+
+        <!-- Combined Timer & Close -->
+        <div
+          class="flex items-center bg-red-500/10 border border-brand-red/20 rounded-lg overflow-hidden"
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            class="h-6 w-6"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
+          <div
+            class="px-3 py-1 font-mono font-bold text-brand-red text-sm border-r border-brand-red/20"
           >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </button>
+            {{ formattedTime }}
+          </div>
+          <button
+            @click="!loading && $emit('close')"
+            class="p-2 text-gray-400 transition-colors"
+            :class="
+              loading
+                ? 'cursor-not-allowed opacity-50'
+                : 'hover:text-white hover:bg-white/10'
+            "
+            :disabled="loading"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-5 w-5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div class="flex flex-col md:flex-row min-h-[400px]">
@@ -165,17 +223,6 @@ const onConfirm = () => {
           <!-- Payment Tabs -->
           <div class="flex border-b border-white/10">
             <button
-              @click="paymentMethod = 'qr'"
-              class="flex-1 py-4 text-sm font-medium transition-colors border-b-2"
-              :class="
-                paymentMethod === 'qr'
-                  ? 'text-white border-brand-red bg-white/5'
-                  : 'text-gray-500 border-transparent hover:text-gray-300'
-              "
-            >
-              QR PromptPay
-            </button>
-            <button
               @click="paymentMethod = 'credit'"
               class="flex-1 py-4 text-sm font-medium transition-colors border-b-2"
               :class="
@@ -185,6 +232,17 @@ const onConfirm = () => {
               "
             >
               Credit Card
+            </button>
+            <button
+              @click="paymentMethod = 'qr'"
+              class="flex-1 py-4 text-sm font-medium transition-colors border-b-2"
+              :class="
+                paymentMethod === 'qr'
+                  ? 'text-white border-brand-red bg-white/5'
+                  : 'text-gray-500 border-transparent hover:text-gray-300'
+              "
+            >
+              QR PromptPay
             </button>
           </div>
 
@@ -306,9 +364,19 @@ const onConfirm = () => {
           >
             <button
               @click="onConfirm"
-              class="w-full bg-brand-red hover:bg-red-600 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-red-900/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
+              :disabled="loading"
+              class="w-full bg-brand-red text-white font-bold py-3.5 rounded-xl shadow-lg shadow-red-900/20 transition-all flex items-center justify-center gap-2"
+              :class="
+                loading
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-red-600 hover:scale-[1.02] active:scale-[0.98]'
+              "
             >
-              Confirm Payment
+              <span
+                v-if="loading"
+                class="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"
+              ></span>
+              {{ loading ? "Processing..." : "Confirm Payment" }}
             </button>
           </div>
         </div>

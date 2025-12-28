@@ -67,8 +67,11 @@ export const seatApi = {
   lock: (userId: string, movieId: string, startTime: string, seatId: string) => 
     api.post('/seats/lock', { user_id: userId, movie_id: movieId, start_time: startTime, seat_id: seatId }),
   
-  book: (userId: string, movieId: string, startTime: string, seatId: string) =>
-    api.post('/seats/book', { user_id: userId, movie_id: movieId, start_time: startTime, seat_id: seatId }),
+  book: (userId: string, movieId: string, startTime: string, seatIds: string[]) =>
+    api.post('/seats/book', { user_id: userId, movie_id: movieId, start_time: startTime, seat_ids: seatIds }),
+
+  extend: (userId: string, movieId: string, startTime: string, seatIds: string[]) =>
+    api.post('/seats/extend', { user_id: userId, movie_id: movieId, start_time: startTime, seat_ids: seatIds }),
 };
 
 export const adminApi = {

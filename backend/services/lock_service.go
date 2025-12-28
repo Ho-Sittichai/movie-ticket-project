@@ -39,6 +39,27 @@ func (s *LockService) UnlockSeat(screeningID, seatID string) error {
 	return s.RDB.Del(ctx, key).Err()
 }
 
+// ExtendSeatLock ต่อเวลา
+func (s *LockService) ExtendSeatLock(screeningID, seatID, userID string, duration time.Duration) (bool, error) {
+	ctx := context.Background()
+	key := fmt.Sprintf("lock:screening:%s:seat:%s", screeningID, seatID)
+
+	// Check ownership first
+	val, err := s.RDB.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false, nil // Not locked
+	}
+	if err != nil {
+		return false, err
+	}
+	if val != userID {
+		return false, nil // Locked by someone else
+	}
+
+	// Extend TTL
+	return s.RDB.Expire(ctx, key, duration).Result()
+}
+
 // IsSeatLocked เช็คสถานะ
 func (s *LockService) IsSeatLocked(screeningID, seatID string) (bool, string) {
 	ctx := context.Background()

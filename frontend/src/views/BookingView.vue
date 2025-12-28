@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import api from "../services/api";
+import api, { seatApi } from "../services/api";
 import { useAuthStore } from "../stores/auth";
-import PaymentModal from "../components/PaymentModal.vue";
+import PaymentModal from "../components/Modal/PaymentModal.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -221,6 +221,8 @@ onMounted(() => {
   connectWS();
 });
 
+const isBooking = ref(false);
+
 const confirmBooking = async () => {
   if (!authStore.user) {
     authStore.openLoginModal();
@@ -229,29 +231,66 @@ const confirmBooking = async () => {
 
   if (selectedSeats.value.length === 0) return;
 
-  // Book all selected
-  const seatToBook = selectedSeats.value[0];
-
   try {
+    isBooking.value = true; // Start loading
     const movieId = route.params.movieId as string;
     const startTime = route.query.time as string;
+    const seatIds = selectedSeats.value.map((s) => s.id);
 
-    const res = await api.post("/seats/book", {
-      user_id: authStore.user.user_id,
-      movie_id: movieId,
-      start_time: startTime,
-      seat_id: seatToBook.id,
-    });
+    const res = await seatApi.book(
+      authStore.user.user_id,
+      movieId,
+      startTime,
+      seatIds
+    );
 
     if (res.status === 200) {
       alert("Booking Success!");
-      seatToBook.status = "BOOKED";
-      isPaymentModalOpen.value = false; // Close modal on success
-      router.push("/"); // Redirect to home or ticket page
+      // Loop to update local status if needed (though API/WS should handle it)
+      selectedSeats.value.forEach((s) => (s.status = "BOOKED"));
+      isPaymentModalOpen.value = false;
+      router.push("/");
     }
-  } catch (e) {
+  } catch (e: any) {
     console.error("Booking failed", e);
-    alert("Booking Failed");
+    alert("Booking Failed: " + (e.response?.data?.error || "Unknown Error"));
+  } finally {
+    isBooking.value = false; // Stop loading
+  }
+};
+
+const isExtending = ref(false);
+
+const handleBookTicket = async () => {
+  if (!authStore.user) {
+    authStore.openLoginModal();
+    return;
+  }
+  if (selectedSeats.value.length === 0) return;
+
+  try {
+    isExtending.value = true;
+    const movieId = route.params.movieId as string;
+    const startTime = route.query.time as string;
+    const seatIds = selectedSeats.value.map((s) => s.id);
+
+    // Call Extend API
+    await api.post("/seats/extend", {
+      user_id: authStore.user.user_id,
+      movie_id: movieId,
+      start_time: startTime,
+      seat_ids: seatIds,
+    });
+
+    // Success -> Open Modal
+    isPaymentModalOpen.value = true;
+  } catch (e) {
+    console.error("Failed to extend lock", e);
+    alert("Failed to proceed. Your seat lock might have expired.");
+    // Maybe refresh?
+    fetchScreening();
+  } finally {
+    isExtending.value = false;
   }
 };
 </script>
@@ -399,9 +438,14 @@ const confirmBooking = async () => {
           </div>
 
           <button
-            @click="isPaymentModalOpen = true"
-            class="bg-brand-red hover:bg-red-600 text-white px-6 sm:px-8 py-3 rounded-xl font-bold text-base sm:text-lg shadow-xl shadow-red-900/20 transition-all hover:scale-105 active:scale-95"
+            @click="handleBookTicket"
+            class="bg-brand-red hover:bg-red-600 text-white px-6 sm:px-8 py-3 rounded-xl font-bold text-base sm:text-lg shadow-xl shadow-red-900/20 transition-all hover:scale-105 active:scale-95 flex items-center gap-2"
+            :disabled="isExtending"
           >
+            <span
+              v-if="isExtending"
+              class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"
+            ></span>
             Book Ticket
           </button>
         </div>
@@ -414,6 +458,7 @@ const confirmBooking = async () => {
       :movieTitle="movie.title"
       :totalPrice="totalPrice"
       :selectedSeats="selectedSeats"
+      :loading="isBooking"
       @close="isPaymentModalOpen = false"
       @confirm="confirmBooking"
     />

@@ -62,6 +62,7 @@ func main() {
 		{
 			bookingGroup.POST("/lock", handlers.LockSeat)
 			bookingGroup.POST("/book", handlers.BookSeat)
+			bookingGroup.POST("/extend", handlers.ExtendSeatLock)
 		}
 		// api.POST("/seats/unlock", handlers.UnlockSeat) // Implement if needed
 
