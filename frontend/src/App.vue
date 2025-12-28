@@ -14,7 +14,6 @@ import LoginModal from "./components/Modal/LoginModal.vue";
     </main>
 
     <Footer />
-    <Footer />
     <LoginModal />
     <ToastNotification />
   </div>

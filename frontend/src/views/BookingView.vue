@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import api, { seatApi } from "../services/api";
+import api, { paymentApi, seatApi } from "../services/api";
 import { useAuthStore } from "../stores/auth";
 import PaymentModal from "../components/Modal/PaymentModal.vue";
 
@@ -167,7 +167,7 @@ const toggleSeat = async (seat: any) => {
     console.error("Lock error", e);
     seat.status = "AVAILABLE"; // Simplify revert
     if (e.response && e.response.status === 409) {
-      alert("Seat is already taken by another user!");
+      alert(e.response.data.error);
     } else {
       alert("Error updating seat");
     }
@@ -260,6 +260,7 @@ const confirmBooking = async () => {
 };
 
 const isExtending = ref(false);
+const paymentExpireAt = ref(0);
 
 const handleBookTicket = async () => {
   if (!authStore.user) {
@@ -274,25 +275,74 @@ const handleBookTicket = async () => {
     const startTime = route.query.time as string;
     const seatIds = selectedSeats.value.map((s) => s.id);
 
-    // Call Extend API
-    await api.post("/seats/extend", {
-      user_id: authStore.user.user_id,
-      movie_id: movieId,
-      start_time: startTime,
-      seat_ids: seatIds,
-    });
+    // Start Payment (Extends locks + Sets payment lock)
+    const { data } = await paymentApi.start(
+      authStore.user.user_id,
+      movieId,
+      startTime,
+      seatIds
+    );
+    paymentExpireAt.value = new Date(data.expire_at).getTime();
 
     // Success -> Open Modal
     isPaymentModalOpen.value = true;
-  } catch (e) {
+  } catch (e: any) {
     console.error("Failed to extend lock", e);
-    alert("Failed to proceed. Your seat lock might have expired.");
+    alert(e.response?.data?.error);
     // Maybe refresh?
     fetchScreening();
   } finally {
     isExtending.value = false;
   }
 };
+
+const closePaymentModal = async () => {
+  isPaymentModalOpen.value = false;
+  try {
+    await paymentApi.cancel();
+  } catch (e) {
+    console.error("Failed to cancel payment lock", e);
+  }
+};
+
+// Browser Refresh/Close Protection
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  if (isPaymentModalOpen.value) {
+    // 1. Prevent Default (Show Browser Confirmation)
+    event.preventDefault();
+    event.returnValue = "";
+
+    // 2. Auto-Cancel using fetch + keepalive
+    // Note: We use raw fetch because axios might be killed
+    const token = localStorage.getItem("token");
+    if (token) {
+      fetch("http://localhost:8080/api/payment/cancel", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        keepalive: true,
+      });
+    }
+  }
+};
+
+watch(isPaymentModalOpen, (isOpen) => {
+  if (isOpen) {
+    window.addEventListener("beforeunload", handleBeforeUnload);
+  } else {
+    window.removeEventListener("beforeunload", handleBeforeUnload);
+  }
+});
+
+onUnmounted(() => {
+  window.removeEventListener("beforeunload", handleBeforeUnload);
+  if (isPaymentModalOpen.value) {
+    // Fallback cleanup if component unmounts without closing modal (e.g. route change)
+    closePaymentModal();
+  }
+});
 </script>
 
 <template>
@@ -300,7 +350,7 @@ const handleBookTicket = async () => {
     <!-- Header Info -->
     <div class="container mx-auto px-6 py-6 flex items-center gap-4">
       <button
-        @click="router.back()"
+        @click="router.push('/')"
         class="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white transition-colors"
       >
         &larr;
@@ -371,14 +421,6 @@ const handleBookTicket = async () => {
           >
             <span v-if="seat.status !== 'LOADING'">{{ seat.number }}</span>
             <span v-else class="w-2 h-2 rounded-full bg-white/20"></span>
-
-            <!-- Tooltip -->
-            <span
-              v-if="seat.status === 'AVAILABLE'"
-              class="hidden sm:block absolute -top-8 bg-black text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20"
-            >
-              {{ movie.price }} ฿
-            </span>
           </button>
         </div>
       </div>
@@ -459,7 +501,8 @@ const handleBookTicket = async () => {
       :totalPrice="totalPrice"
       :selectedSeats="selectedSeats"
       :loading="isBooking"
-      @close="isPaymentModalOpen = false"
+      :expireAt="paymentExpireAt"
+      @close="closePaymentModal"
       @confirm="confirmBooking"
     />
   </div>

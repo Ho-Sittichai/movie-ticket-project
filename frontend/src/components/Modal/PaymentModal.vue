@@ -7,6 +7,7 @@ const props = defineProps<{
   totalPrice: number;
   selectedSeats: any[];
   loading?: boolean;
+  expireAt: number;
 }>();
 
 const emit = defineEmits(["close", "confirm"]);
@@ -21,9 +22,6 @@ const MAX_DISPLAY_SEATS = 15;
 
 const displayedSeats = computed(() => {
   if (props.selectedSeats.length <= MAX_DISPLAY_SEATS + 1) {
-    // If we have 16 seats, we can just show them all (4 rows * 4 cols = 16)
-    // So distinct limit might be 16 if no overflow needed.
-    // But if > 16, we show 15 and 1 overflow button.
     if (props.selectedSeats.length <= 16) return props.selectedSeats;
     return props.selectedSeats.slice(0, MAX_DISPLAY_SEATS);
   }
@@ -36,7 +34,7 @@ const remainingSeatsCount = computed(() => {
 });
 
 // Timer Logic
-const timeLeft = ref(300); // 5 minutes in seconds
+const timeLeft = ref(0);
 let timerInterval: number;
 
 const formattedTime = computed(() => {
@@ -46,17 +44,34 @@ const formattedTime = computed(() => {
 });
 
 const startTimer = () => {
-  timeLeft.value = 300;
+  // Update immediately
+  updateTimeLeft();
+
   clearInterval(timerInterval);
   timerInterval = setInterval(() => {
-    if (timeLeft.value > 0) {
-      timeLeft.value--;
-    } else {
-      clearInterval(timerInterval);
-      alert("Payment time expired!");
-      emit("close");
-    }
-  }, 1000);
+    updateTimeLeft();
+  }, 1000); // Check every second
+};
+
+const updateTimeLeft = () => {
+  if (!props.expireAt) return;
+  const now = Date.now();
+  const diff = Math.floor((props.expireAt - now) / 1000);
+
+  if (diff > 0) {
+    timeLeft.value = diff;
+  } else {
+    timeLeft.value = 0;
+    clearInterval(timerInterval);
+    isTimeExpired.value = true;
+  }
+};
+
+const isTimeExpired = ref(false);
+
+const handleExpiredConfirm = () => {
+  isTimeExpired.value = false;
+  emit("close");
 };
 
 // Reset timer when modal opens
@@ -91,8 +106,51 @@ const onConfirm = () => {
       @click="$emit('close')"
     ></div>
 
+    <!-- Expiration Overlay -->
+    <div
+      v-if="isTimeExpired"
+      class="absolute inset-0 z-[60] flex items-center justify-center p-4"
+    >
+      <div class="fixed inset-0 bg-black/60 backdrop-blur-sm"></div>
+      <div
+        class="bg-[#1e1e1e] border border-red-500/30 p-8 rounded-2xl shadow-2xl relative z-10 max-w-sm w-full text-center space-y-6 animate-in zoom-in duration-300"
+      >
+        <div
+          class="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-4"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="w-8 h-8 text-red-500"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+        </div>
+        <div>
+          <h3 class="text-xl font-bold text-white mb-2">Time Expired</h3>
+          <p class="text-gray-400 text-sm">
+            Your payment session has timed out. Please select your seats again.
+          </p>
+        </div>
+        <button
+          @click="handleExpiredConfirm"
+          class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl transition-colors"
+        >
+          OK
+        </button>
+      </div>
+    </div>
+
     <!-- Modal Content -->
     <div
+      v-else
       class="relative bg-[#1e1e1e] border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl shadow-black animate-in fade-in zoom-in duration-300 flex flex-col"
     >
       <!-- Header -->

@@ -59,6 +59,11 @@ export const movieApi = {
   getAll: () => api.get('/movies'),
 };
 
+export const paymentApi = {
+  start: (userId: string, movieId: string, startTime: string, seatIds: string[]) => 
+    api.post('/payment/start', { user_id: userId, movie_id: movieId, start_time: startTime, seat_ids: seatIds }),
+  cancel: () => api.post('/payment/cancel', {}),
+};
 export const screeningApi = {
   getDetails: (movieId: string, startTime: string) => api.post('/screenings/details', { movie_id: movieId, start_time: startTime }),
 };

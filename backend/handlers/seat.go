@@ -14,97 +14,16 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// --- Booking Handler ---
-func GetScreeningDetails(c *gin.Context) {
-	fmt.Println("GetScreeningDetails")
-	var req struct {
-		MovieID   string `json:"movie_id"`
-		StartTime string `json:"start_time"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-
-	movieObjID, err := primitive.ObjectIDFromHex(req.MovieID)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "Invalid Movie ID"})
-		return
-	}
-
-	// Parse incoming time
-	reqTime, err := time.Parse(time.RFC3339, req.StartTime)
-	if err != nil {
-		fmt.Printf("Error parsing time: %v\n", err)
-		c.JSON(400, gin.H{"error": "Invalid Start Time format"})
-		return
-	}
-
-	fmt.Printf("Searching for MovieID: %s, StartTime: %v\n", req.MovieID, reqTime)
-
-	collection := database.Mongo.Collection("movies")
-	var movie models.Movie
-	err = collection.FindOne(context.TODO(), bson.M{"_id": movieObjID}).Decode(&movie)
-	if err != nil {
-		fmt.Println("Movie not found in DB")
-		c.JSON(404, gin.H{"error": "Movie not found"})
-		return
-	}
-
-	var screening *models.Screening
-	for _, s := range movie.Screenings {
-		fmt.Printf("Checking screening time: %v vs Req: %v\n", s.StartTime, reqTime)
-		// Compare times (ignoring small differences if needed, but exact match preferred)
-		if s.StartTime.Equal(reqTime) || s.StartTime.Format(time.RFC3339) == req.StartTime {
-			screening = &s
-			break
-		}
-	}
-
-	if screening == nil {
-		c.JSON(404, gin.H{"error": "Screening not found"})
-		return
-	}
-
-	// Redis Lock check
-	lockService := services.NewLockService()
-	lockedSeatsMap, _ := lockService.GetLockedSeats(screening.ID)
-
-	// Merge Status
-	seatsCopy := make([]models.Seat, len(screening.Seats))
-	copy(seatsCopy, screening.Seats)
-
-	for i := range seatsCopy {
-		if userID, ok := lockedSeatsMap[seatsCopy[i].ID]; ok {
-			if seatsCopy[i].Status == models.SeatAvailable {
-				seatsCopy[i].Status = "LOCKED"
-				seatsCopy[i].LockedBy = userID
-			}
-		}
-	}
-	screening.Seats = seatsCopy
-
-	c.JSON(200, gin.H{
-		"screening": screening,
-		"movie": gin.H{
-			"id":           movie.ID,
-			"title":        movie.Title,
-			"duration_min": movie.DurationMin,
-		},
-	})
-}
-
+// --- Seat Handlers ---
 func LockSeat(c *gin.Context) {
-	// Get trusted UserID from Context
-	userID, exists := c.Get("userID")
+	val, exists := c.Get("userID")
 	if !exists {
 		c.JSON(401, gin.H{"error": "Unauthorized"})
 		return
 	}
-	UserID := userID.(string)
+	userID := val.(string)
 
 	var req struct {
-		// UserID    string `json:"user_id"` // REMOVED: Use Trusted UserID
 		MovieID   string `json:"movie_id"`
 		StartTime string `json:"start_time"`
 		SeatID    string `json:"seat_id"`
@@ -124,11 +43,20 @@ func LockSeat(c *gin.Context) {
 	// 2. Lock Redis
 	lockService := services.NewLockService()
 
+	// Check for Payment Lock (Block changes if paying for THIS screening)
+	paymentLock, _ := lockService.GetPaymentLock(userID)
+	if paymentLock != nil {
+		if paymentLock.MovieID == req.MovieID && paymentLock.StartTime == req.StartTime {
+			c.JSON(409, gin.H{"error": "Cannot change seats while payment is in progress"})
+			return
+		}
+	}
+
 	// Check if already locked
 	isLocked, holderID := lockService.IsSeatLocked(screeningID, req.SeatID)
 
 	if isLocked {
-		if holderID == UserID {
+		if holderID == userID {
 			// Same user -> Unlock (Toggle)
 			err := lockService.UnlockSeat(screeningID, req.SeatID)
 			if err != nil {
@@ -153,7 +81,7 @@ func LockSeat(c *gin.Context) {
 	}
 
 	// Not locked -> Lock it
-	locked, err := lockService.LockSeat(screeningID, req.SeatID, UserID, 5*time.Minute)
+	locked, err := lockService.LockSeat(screeningID, req.SeatID, userID, 5*time.Minute)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Redis error"})
 		return
@@ -168,7 +96,7 @@ func LockSeat(c *gin.Context) {
 	services.WSHub.Broadcast <- services.SeatUpdateMessage{
 		ScreeningID: screeningID,
 		SeatID:      req.SeatID,
-		UserID:      UserID,
+		UserID:      userID,
 		Status:      "LOCKED",
 	}
 
@@ -176,13 +104,12 @@ func LockSeat(c *gin.Context) {
 }
 
 func BookSeat(c *gin.Context) {
-	// Get trusted UserID from Context
-	userID, exists := c.Get("userID")
+	val, exists := c.Get("userID")
 	if !exists {
 		c.JSON(401, gin.H{"error": "Unauthorized"})
 		return
 	}
-	UserID := userID.(string)
+	userID := val.(string)
 
 	var req struct {
 		MovieID   string   `json:"movie_id"`
@@ -210,8 +137,8 @@ func BookSeat(c *gin.Context) {
 	for _, seatID := range req.SeatIDs {
 		// 1. Check Lock
 		locked, holder := lockService.IsSeatLocked(screeningID, seatID)
-		if !locked || holder != UserID {
-			fmt.Printf("Seat %s lock invalid for user %s\n", seatID, UserID)
+		if !locked || holder != userID {
+			fmt.Printf("Seat %s lock invalid for user %s\n", seatID, userID)
 			continue // Skip this seat or abort? Skip for partial success preferrable here
 		}
 
@@ -225,13 +152,6 @@ func BookSeat(c *gin.Context) {
 				},
 			},
 		}
-
-		// Note: We use "AVAILABLE" in check, but if it's LOCKED by us, it might be visually "LOCKED" in DB?
-		// Actually, in our logic, status in DB remains "AVAILABLE" until booked. Redis holds the "LOCKED" state.
-		// Wait, did we update DB status to LOCKED?
-		// In LockSeat: c.JSON(200, ... "status": "LOCKED"). Redis is set.
-		// DB status is NOT updated to LOCKED in the current implementation (based on `GetScreeningDetails` merging).
-		// So checking "seats.status": "AVAILABLE" is correct.
 
 		update := bson.M{
 			"$set": bson.M{
@@ -262,7 +182,7 @@ func BookSeat(c *gin.Context) {
 		// 3. Create Booking Record
 		booking := models.Booking{
 			ID:          primitive.NewObjectID(),
-			UserID:      UserID,
+			UserID:      userID,
 			ScreeningID: screeningID,
 			SeatID:      seatID,
 			Status:      "SUCCESS",
@@ -292,18 +212,20 @@ func BookSeat(c *gin.Context) {
 		return
 	}
 
+	// Release Payment Lock
+	lockService.ReleasePaymentLock(userID)
+
 	c.JSON(200, gin.H{"message": "Booking Success", "booked_count": bookedCount})
 }
 
 // ExtendSeatLock Handler for batch extension
 func ExtendSeatLock(c *gin.Context) {
-	// Get trusted UserID from Context
-	userID, exists := c.Get("userID")
+	val, exists := c.Get("userID")
 	if !exists {
 		c.JSON(401, gin.H{"error": "Unauthorized"})
 		return
 	}
-	trustedUserID := userID.(string)
+	userID := val.(string)
 
 	var req struct {
 		MovieID   string   `json:"movie_id"`
@@ -325,7 +247,7 @@ func ExtendSeatLock(c *gin.Context) {
 	extendedCount := 0
 
 	for _, seatID := range req.SeatIDs {
-		success, err := lockService.ExtendSeatLock(screeningID, seatID, trustedUserID, 5*time.Minute)
+		success, err := lockService.ExtendSeatLock(screeningID, seatID, userID, 5*time.Minute)
 		if err != nil {
 			fmt.Printf("Error extending lock for seat %s: %v\n", seatID, err)
 			continue

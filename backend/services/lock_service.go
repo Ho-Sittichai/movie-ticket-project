@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"movie-ticket-backend/database"
 	"time"
@@ -22,7 +23,7 @@ func NewLockService() *LockService {
 // LockSeat พยายาม Lock ที่นั่ง
 func (s *LockService) LockSeat(screeningID, seatID, userID string, duration time.Duration) (bool, error) {
 	ctx := context.Background()
-	key := fmt.Sprintf("lock:screening:%s:seat:%s", screeningID, seatID)
+	key := fmt.Sprintf("seat_lock:screening:%s:seat:%s", screeningID, seatID)
 
 	// Value คือ UserID เพื่อบอกว่าใคร Lock
 	success, err := s.RDB.SetNX(ctx, key, userID, duration).Result() // SetNX for Set if Not Exists
@@ -35,14 +36,14 @@ func (s *LockService) LockSeat(screeningID, seatID, userID string, duration time
 // UnlockSeat ปลด Lock
 func (s *LockService) UnlockSeat(screeningID, seatID string) error {
 	ctx := context.Background()
-	key := fmt.Sprintf("lock:screening:%s:seat:%s", screeningID, seatID)
+	key := fmt.Sprintf("seat_lock:screening:%s:seat:%s", screeningID, seatID)
 	return s.RDB.Del(ctx, key).Err()
 }
 
 // ExtendSeatLock ต่อเวลา
 func (s *LockService) ExtendSeatLock(screeningID, seatID, userID string, duration time.Duration) (bool, error) {
 	ctx := context.Background()
-	key := fmt.Sprintf("lock:screening:%s:seat:%s", screeningID, seatID)
+	key := fmt.Sprintf("seat_lock:screening:%s:seat:%s", screeningID, seatID)
 
 	// Check ownership first
 	val, err := s.RDB.Get(ctx, key).Result()
@@ -63,7 +64,7 @@ func (s *LockService) ExtendSeatLock(screeningID, seatID, userID string, duratio
 // IsSeatLocked เช็คสถานะ
 func (s *LockService) IsSeatLocked(screeningID, seatID string) (bool, string) {
 	ctx := context.Background()
-	key := fmt.Sprintf("lock:screening:%s:seat:%s", screeningID, seatID)
+	key := fmt.Sprintf("seat_lock:screening:%s:seat:%s", screeningID, seatID)
 
 	val, err := s.RDB.Get(ctx, key).Result()
 	if err == redis.Nil {
@@ -75,9 +76,57 @@ func (s *LockService) IsSeatLocked(screeningID, seatID string) (bool, string) {
 	return true, val
 }
 
+// --- User Payment Lock ---
+
+func (s *LockService) SetPaymentLock(userID, movieID, startTime string, duration time.Duration) error {
+	ctx := context.Background()
+	key := fmt.Sprintf("payment_lock:%s", userID)
+
+	val := fmt.Sprintf(`{"user_id":"%s", "movie_id":"%s", "start_time":"%s"}`, userID, movieID, startTime)
+
+	return s.RDB.Set(ctx, key, val, duration).Err()
+}
+
+func (s *LockService) ReleasePaymentLock(userID string) error {
+	ctx := context.Background()
+	key := fmt.Sprintf("payment_lock:%s", userID)
+	return s.RDB.Del(ctx, key).Err()
+}
+
+func (s *LockService) HasPaymentLock(userID string) bool {
+	ctx := context.Background()
+	key := fmt.Sprintf("payment_lock:%s", userID)
+	count, _ := s.RDB.Exists(ctx, key).Result()
+	return count > 0
+}
+
+type PaymentLockDetails struct {
+	UserID    string `json:"user_id"`
+	MovieID   string `json:"movie_id"`
+	StartTime string `json:"start_time"`
+}
+
+func (s *LockService) GetPaymentLock(userID string) (*PaymentLockDetails, error) {
+	ctx := context.Background()
+	key := fmt.Sprintf("payment_lock:%s", userID)
+	val, err := s.RDB.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return nil, nil // No lock
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var details PaymentLockDetails
+	if err := json.Unmarshal([]byte(val), &details); err != nil {
+		return nil, err
+	}
+	return &details, nil
+}
+
 func (s *LockService) GetLockedSeats(screeningID string) (map[string]string, error) {
 	ctx := context.Background()
-	pattern := fmt.Sprintf("lock:screening:%s:seat:*", screeningID)
+	pattern := fmt.Sprintf("seat_lock:screening:%s:seat:*", screeningID)
 
 	keys, err := s.RDB.Keys(ctx, pattern).Result()
 	if err != nil {
@@ -96,12 +145,12 @@ func (s *LockService) GetLockedSeats(screeningID string) (map[string]string, err
 	}
 
 	for i, key := range keys {
-		// Key format: lock:screening:<ScreeningID>:seat:<SeatID>
+		// Key format: seat_lock:screening:<ScreeningID>:seat:<SeatID>
 		// We know keys matched the pattern, so we can parse carefully or just split
-		// Pattern: lock:screening:%s:seat:*
+		// Pattern: seat_lock:screening:%s:seat:*
 
 		// Robust parsing:
-		var prefix = fmt.Sprintf("lock:screening:%s:seat:", screeningID)
+		var prefix = fmt.Sprintf("seat_lock:screening:%s:seat:", screeningID)
 		if len(key) > len(prefix) {
 			seatID := key[len(prefix):]
 
@@ -125,14 +174,14 @@ func (s *LockService) ListenForExpireRedis() {
 	ch := pubsub.Channel()
 	for msg := range ch {
 		key := msg.Payload
-		// Format: lock:screening:SCR_ID:seat:SEAT_ID
+		// Format: seat_lock:screening:SCR_ID:seat:SEAT_ID
 		var scrID, seatID string
-		_, _ = fmt.Sscanf(key, "lock:screening:%s:seat:%s", &scrID, &seatID)
+		_, _ = fmt.Sscanf(key, "seat_lock:screening:%s:seat:%s", &scrID, &seatID)
 
 		// Note: Sscanf might fail with %s if no separators.
 		// Manual parse for safety:
-		// lock:screening:s1:seat:A1
-		var prefix = "lock:screening:"
+		// seat_lock:screening:s1:seat:A1
+		var prefix = "seat_lock:screening:"
 		var midPart = ":seat:"
 
 		if len(key) > len(prefix) && contains(key, midPart) {

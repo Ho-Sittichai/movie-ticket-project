@@ -64,6 +64,14 @@ func main() {
 			bookingGroup.POST("/book", handlers.BookSeat)
 			bookingGroup.POST("/extend", handlers.ExtendSeatLock)
 		}
+
+		// Protected Payment Routes
+		paymentGroup := api.Group("/payment")
+		paymentGroup.Use(middleware.RequireAuth())
+		{
+			paymentGroup.POST("/start", handlers.StartPayment)
+			paymentGroup.POST("/cancel", handlers.CancelPayment)
+		}
 		// api.POST("/seats/unlock", handlers.UnlockSeat) // Implement if needed
 
 		api.GET("/ws", services.ServeWS)
