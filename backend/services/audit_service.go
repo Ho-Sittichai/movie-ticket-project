@@ -1,48 +1,28 @@
 package services
 
 import (
-	"context"
 	"fmt"
 	"log"
-	"movie-ticket-backend/database"
 	"movie-ticket-backend/models"
 	"time"
 )
 
-// Global Channel for buffering logs
-var logChannel chan models.AuditLog
-
-const LogBufferSize = 1000
-
-// InitAuditService starts the background worker
+// InitAuditService - ไม่จำเป็นต้องมี Background Worker ในเครื่องแล้ว เพราะส่งงานให้ Kafka ทำแทน
 func InitAuditService() {
-	logChannel = make(chan models.AuditLog, LogBufferSize)
-
-	// Start background worker
-	go func() {
-		fmt.Println("Audit Log Worker started...")
-		collection := database.Mongo.Collection("audit_logs")
-
-		for logEntry := range logChannel {
-			_, err := collection.InsertOne(context.Background(), logEntry)
-			if err != nil {
-				log.Printf("Failed to insert audit log: %v", err)
-			}
-		}
-	}()
+	fmt.Println("Audit Service initialized (Kafka-backed)...")
 }
 
-// LogInfo sends an INFO log to the channel
+// LogInfo ส่ง Log ประเภทข่าวสารทั่วไปเข้า Kafka
 func LogInfo(eventType string, userID string, details map[string]interface{}) {
 	pushLog("INFO", eventType, userID, details)
 }
 
-// LogWarn sends a WARN log to the channel
+// LogWarn ส่ง Log ประเภทคำเตือนเข้า Kafka
 func LogWarn(eventType string, userID string, details map[string]interface{}) {
 	pushLog("WARN", eventType, userID, details)
 }
 
-// LogError sends an ERROR log to the channel
+// LogError ส่ง Log ประเภทข้อผิดพลาดเข้า Kafka
 func LogError(eventType string, userID string, err error, details map[string]interface{}) {
 	if details == nil {
 		details = make(map[string]interface{})
@@ -51,18 +31,22 @@ func LogError(eventType string, userID string, err error, details map[string]int
 	pushLog("ERROR", eventType, userID, details)
 }
 
+// pushLog คือไส้ในที่จะสร้างก้อนข้อมูล (AuditLog) แล้วยิงเข้า Kafka Topic "AUDIT_LOG"
 func pushLog(level, eventType, userID string, details map[string]interface{}) {
-	select {
-	case logChannel <- models.AuditLog{
+	logEntry := models.AuditLog{
 		Timestamp: time.Now(),
 		Level:     level,
 		EventType: eventType,
 		UserID:    userID,
 		Details:   details,
-	}:
-		// Log sent to buffer
-	default:
-		// Buffer full, drop log to prevent blocking main thread (or handle gracefully)
-		log.Printf("Audit Log Buffer Full! Dropping log: %s", eventType)
+	}
+
+	// ใช้ QueueService (Kafka) ในการส่งข้อมูลแบบ Async
+	q := GetQueueService()
+	if q != nil {
+		q.PublishEvent("AUDIT_LOG", logEntry)
+	} else {
+		// ถ้า Kafka ยังไม่พร้อม (เช่น ช่วงเปิดเครื่อง) ให้พิมพ์ลง Console แก้ขัดไปก่อน
+		log.Printf("[AUDIT] %s: %s (User: %s)", level, eventType, userID)
 	}
 }

@@ -26,9 +26,10 @@ func main() {
 	database.ConnectDB()
 
 	// Init Services
-	services.InitQueueService() // Kafka
-	services.InitWSHub()
-	services.InitAuditService()
+	services.InitQueueService() // Connect Kafka
+	services.StartQueueConsumer() // Listen event from kafka
+	services.InitWSHub() // Init WebSocket Hub
+	services.InitAuditService() // Init Audit log Service
 
 	// Start Redis Expiration Listener
 	lockService := services.NewLockService()
