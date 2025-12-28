@@ -56,11 +56,12 @@ type Seat struct {
 }
 
 type Booking struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	UserID      string             `bson:"user_id" json:"user_id"`
-	ScreeningID string             `bson:"screening_id" json:"screening_id"`
-	SeatID      string             `bson:"seat_id" json:"seat_id"`
-	Status      string             `bson:"status" json:"status"`
-	Amount      float64            `bson:"amount" json:"amount"`
-	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
+	ID              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	UserID          string             `bson:"user_id" json:"user_id"`
+	ScreeningID     string             `bson:"screening_id" json:"screening_id"`
+	ScreenStartTime string             `bson:"screen_start_time" json:"screen_start_time"`
+	SeatID          string             `bson:"seat_id" json:"seat_id"`
+	Status          string             `bson:"status" json:"status"`
+	Amount          float64            `bson:"amount" json:"amount"`
+	CreatedAt       time.Time          `bson:"created_at" json:"created_at"`
 }

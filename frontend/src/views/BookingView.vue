@@ -296,10 +296,10 @@ const handleBookTicket = async () => {
   }
 };
 
-const closePaymentModal = async () => {
+const closePaymentModal = async (reason = "user_cancelled") => {
   isPaymentModalOpen.value = false;
   try {
-    await paymentApi.cancel();
+    await paymentApi.cancel(reason);
   } catch (e) {
     console.error("Failed to cancel payment lock", e);
   }
@@ -322,6 +322,7 @@ const handleBeforeUnload = (event: BeforeUnloadEvent) => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
+        body: JSON.stringify({ reason: "tab_closed" }),
         keepalive: true,
       });
     }

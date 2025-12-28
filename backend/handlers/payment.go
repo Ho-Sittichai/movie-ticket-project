@@ -65,8 +65,16 @@ func StartPayment(c *gin.Context) {
 	// 4. Set Payment Lock
 	lockDuration := 5 * time.Minute
 	expireAt := time.Now().Add(lockDuration)
-	err = lockService.SetPaymentLock(userID, req.MovieID, req.StartTime, lockDuration)
+	err = lockService.SetPaymentLock(userID, services.PaymentLockDetails{
+		UserID:      userID,
+		MovieID:     req.MovieID,
+		ScreeningID: screeningID,
+		StartTime:   req.StartTime,
+		SeatIDs:     req.SeatIDs,
+	}, lockDuration)
+
 	if err != nil {
+		services.LogError("SYSTEM_ERROR", userID, err, map[string]interface{}{"context": "set_payment_lock"})
 		c.JSON(500, gin.H{"error": "Failed to set payment lock"})
 		return
 	}
@@ -88,7 +96,9 @@ func CancelPayment(c *gin.Context) {
 	userID := val.(string)
 
 	lockService := services.NewLockService()
+
+	// 1. Release Lock (Deleting the key prevents the 'expired' event, so no log will be written)
 	lockService.ReleasePaymentLock(userID)
 
-	c.JSON(200, gin.H{"message": "Payment cancelled"})
+	c.JSON(200, gin.H{"message": "Payment processed"})
 }

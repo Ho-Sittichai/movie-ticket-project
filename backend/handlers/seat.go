@@ -71,6 +71,15 @@ func LockSeat(c *gin.Context) {
 				Status:      "AVAILABLE",
 			}
 
+			// [AUDIT LOG] Seat Manually Released (Unlocked)
+			services.LogInfo("SEAT_RELEASED", userID, map[string]interface{}{
+				"movie_id":          req.MovieID,
+				"screen_id":         screeningID,
+				"screen_start_time": req.StartTime,
+				"seat_id":           req.SeatID,
+				"reason":            "user_unlocked",
+			})
+
 			c.JSON(200, gin.H{"message": "Seat unlocked", "status": "AVAILABLE"})
 			return
 		} else {
@@ -83,6 +92,7 @@ func LockSeat(c *gin.Context) {
 	// Not locked -> Lock it
 	locked, err := lockService.LockSeat(screeningID, req.SeatID, userID, 5*time.Minute)
 	if err != nil {
+		services.LogError("SYSTEM_ERROR", userID, err, map[string]interface{}{"context": "redis_lock_seat"})
 		c.JSON(500, gin.H{"error": "Redis error"})
 		return
 	}
@@ -181,13 +191,14 @@ func BookSeat(c *gin.Context) {
 
 		// 3. Create Booking Record
 		booking := models.Booking{
-			ID:          primitive.NewObjectID(),
-			UserID:      userID,
-			ScreeningID: screeningID,
-			SeatID:      seatID,
-			Status:      "SUCCESS",
-			Amount:      120, // Should fetch price from screening
-			CreatedAt:   time.Now(),
+			ID:              primitive.NewObjectID(),
+			UserID:          userID,
+			ScreeningID:     screeningID,
+			ScreenStartTime: req.StartTime,
+			SeatID:          seatID,
+			Status:          "SUCCESS",
+			Amount:          120, // Should fetch price from screening
+			CreatedAt:       time.Now(),
 		}
 		bookingCollection.InsertOne(context.TODO(), booking)
 
@@ -211,6 +222,15 @@ func BookSeat(c *gin.Context) {
 		c.JSON(409, gin.H{"error": "Failed to book any seats (locks expired?)"})
 		return
 	}
+
+	// [AUDIT LOG] Booking Success
+	services.LogInfo("BOOKING_SUCCESS", userID, map[string]interface{}{
+		"movie_id":          req.MovieID,
+		"screen_id":         screeningID,
+		"screen_start_time": req.StartTime,
+		"seat_ids":          req.SeatIDs,
+		"booked_count":      bookedCount,
+	})
 
 	// Release Payment Lock
 	lockService.ReleasePaymentLock(userID)

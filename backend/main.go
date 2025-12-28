@@ -28,6 +28,7 @@ func main() {
 	// Init Services
 	services.InitQueueService() // Kafka
 	services.InitWSHub()
+	services.InitAuditService()
 
 	// Start Redis Expiration Listener
 	lockService := services.NewLockService()
@@ -39,6 +40,7 @@ func main() {
 	}
 
 	r := gin.Default()
+	r.Use(middleware.ErrorLogger())
 
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},

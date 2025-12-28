@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"movie-ticket-backend/database"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -78,18 +79,41 @@ func (s *LockService) IsSeatLocked(screeningID, seatID string) (bool, string) {
 
 // --- User Payment Lock ---
 
-func (s *LockService) SetPaymentLock(userID, movieID, startTime string, duration time.Duration) error {
+type PaymentLockDetails struct {
+	UserID      string   `json:"user_id"`
+	MovieID     string   `json:"movie_id"`
+	ScreeningID string   `json:"screening_id"`
+	StartTime   string   `json:"start_time"`
+	SeatIDs     []string `json:"seat_ids"`
+}
+
+func (s *LockService) SetPaymentLock(userID string, details PaymentLockDetails, duration time.Duration) error {
 	ctx := context.Background()
 	key := fmt.Sprintf("payment_lock:%s", userID)
+	dataKey := fmt.Sprintf("payment_data:%s", userID)
 
-	val := fmt.Sprintf(`{"user_id":"%s", "movie_id":"%s", "start_time":"%s"}`, userID, movieID, startTime)
+	val, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
 
-	return s.RDB.Set(ctx, key, val, duration).Err()
+	// 1. Set the expiring lock
+	err = s.RDB.Set(ctx, key, val, duration).Err()
+	if err != nil {
+		return err
+	}
+
+	// 2. Set the persistent data (longer TTL 10m to be safe) for the listener
+	return s.RDB.Set(ctx, dataKey, val, duration+5*time.Minute).Err()
 }
 
 func (s *LockService) ReleasePaymentLock(userID string) error {
 	ctx := context.Background()
 	key := fmt.Sprintf("payment_lock:%s", userID)
+	dataKey := fmt.Sprintf("payment_data:%s", userID)
+
+	// Delete both
+	s.RDB.Del(ctx, dataKey)
 	return s.RDB.Del(ctx, key).Err()
 }
 
@@ -98,12 +122,6 @@ func (s *LockService) HasPaymentLock(userID string) bool {
 	key := fmt.Sprintf("payment_lock:%s", userID)
 	count, _ := s.RDB.Exists(ctx, key).Result()
 	return count > 0
-}
-
-type PaymentLockDetails struct {
-	UserID    string `json:"user_id"`
-	MovieID   string `json:"movie_id"`
-	StartTime string `json:"start_time"`
 }
 
 func (s *LockService) GetPaymentLock(userID string) (*PaymentLockDetails, error) {
@@ -192,12 +210,43 @@ func (s *LockService) ListenForExpireRedis() {
 
 				fmt.Printf("Key Expired! Screening: %s, Seat: %s. Broadcasting unlock...\n", scrID, seatID)
 
+				// [AUDIT LOG] Seat Auto Released (Expired)
+				// Note: movie_id and start_time are not in the Redis key,
+				// logging screening_id and seat_id as primary identifiers.
+				LogInfo("SEAT_RELEASED", "SYSTEM", map[string]interface{}{
+					"screen_id": scrID,
+					"seat_id":   seatID,
+					"reason":    "expired",
+				})
+
 				// WS Broadcast UNLOCK
 				WSHub.Broadcast <- SeatUpdateMessage{
 					ScreeningID: scrID,
 					SeatID:      seatID,
 					Status:      "AVAILABLE",
 				}
+			}
+		} else if strings.HasPrefix(key, "payment_lock:") {
+			// Format: payment_lock:USER_ID
+			userID := strings.TrimPrefix(key, "payment_lock:")
+			dataKey := fmt.Sprintf("payment_data:%s", userID)
+
+			// Fetch details from shadow key
+			val, err := s.RDB.Get(ctx, dataKey).Result()
+			if err == nil {
+				var details PaymentLockDetails
+				if err := json.Unmarshal([]byte(val), &details); err == nil {
+					// [AUDIT LOG] Booking Timeout
+					fmt.Printf("Payment Lock Expired for User: %s. Logging timeout...\n", userID)
+					LogInfo("BOOKING_TIMEOUT", userID, map[string]interface{}{
+						"movie_id":          details.MovieID,
+						"screen_id":         details.ScreeningID,
+						"screen_start_time": details.StartTime,
+						"seat_ids":          details.SeatIDs,
+					})
+				}
+				// Cleanup shadow key
+				s.RDB.Del(ctx, dataKey)
 			}
 		}
 	}

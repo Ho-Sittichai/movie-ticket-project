@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { useToast } from '../composables/useToast';
+import { useAuthStore } from '../stores/auth';
 
 const api = axios.create({
   baseURL: 'http://localhost:8080/api', 
@@ -30,25 +31,18 @@ api.interceptors.response.use(
   (error) => {
     if (error.response && error.response.status === 401) {
       // 401 Unauthorized -> Session Expired or Invalid Token
-      const token = localStorage.getItem('token');
-      if (token) {
-        // Only show if we actually had a token (avoid showing on initial login failure if handled locally)
-        // But for expiration usage, we assume user was logged in.
-        
-        // Import useToast dynamically or outside if possible. 
-        // Since api.ts is a module, we can import useToast at top level if it doesn't use Vue instance immediately?
-        // useToast uses 'ref', so it needs Vue. But it's just a variable. It should be fine.
-        
-        // Clear storage
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+      const authStore = useAuthStore();
+      
+      // Only clear if we currently think we are logged in
+      if (authStore.token) {
+        authStore.logout();
         
         // Trigger Toast
         const { showToast } = useToast();
         showToast('Session expired. Please log in again.', 'error');
         
-        // Optional: Redirect or reload state
-        // window.location.reload(); 
+        // Optional: Open login modal to prompt user
+        authStore.openLoginModal();
       }
     }
     return Promise.reject(error);
@@ -62,7 +56,7 @@ export const movieApi = {
 export const paymentApi = {
   start: (userId: string, movieId: string, startTime: string, seatIds: string[]) => 
     api.post('/payment/start', { user_id: userId, movie_id: movieId, start_time: startTime, seat_ids: seatIds }),
-  cancel: () => api.post('/payment/cancel', {}),
+  cancel: (reason?: string) => api.post('/payment/cancel', { reason: reason || 'user_cancelled' }),
 };
 export const screeningApi = {
   getDetails: (movieId: string, startTime: string) => api.post('/screenings/details', { movie_id: movieId, start_time: startTime }),
