@@ -54,7 +54,7 @@ func (s *LockService) IsSeatLocked(screeningID, seatID string) (bool, string) {
 	return true, val
 }
 
-func (s *LockService) GetLockedSeats(screeningID string) ([]string, error) {
+func (s *LockService) GetLockedSeats(screeningID string) (map[string]string, error) {
 	ctx := context.Background()
 	pattern := fmt.Sprintf("lock:screening:%s:seat:*", screeningID)
 
@@ -63,30 +63,28 @@ func (s *LockService) GetLockedSeats(screeningID string) ([]string, error) {
 		return nil, err
 	}
 
-	var lockedSeatIDs []string
-	for _, key := range keys {
-		// key: lock:screening:X:seat:Y
-		// Extract Y. simpler to just split by :
-		// lock screening X seat Y -> index 4
-		var sID, seatID string
-		fmt.Sscanf(key, "lock:screening:%s:seat:%s", &sID, &seatID)
-		// Sscanf might be tricky with strings containing colons, simpler manual parse
-		// But here IDs are likely simple.
-		// Actually, let's use a simpler split since fmt.Sscanf with strings is weird if not space detached.
+	lockedSeats := make(map[string]string)
+	if len(keys) == 0 {
+		return lockedSeats, nil
+	}
 
-		// manual parse
-		// assuming format is fixed
-		// ... implementation detail ...
-		// for demo, let's just assume we can get it.
-		// Actually, let's just iterate and try to parse.
-		// simplified:
-		var prefix = fmt.Sprintf("lock:screening:%s:seat:", screeningID)
+	// Fetch values (UserIDs) for all keys
+	values, err := s.RDB.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	prefix := fmt.Sprintf("lock:screening:%s:seat:", screeningID)
+	for i, key := range keys {
 		if len(key) > len(prefix) {
-			lockedSeatIDs = append(lockedSeatIDs, key[len(prefix):])
+			seatID := key[len(prefix):]
+			if val, ok := values[i].(string); ok {
+				lockedSeats[seatID] = val
+			}
 		}
 	}
 
-	return lockedSeatIDs, nil
+	return lockedSeats, nil
 }
 
 // ListenForExpireRedis คอยฟัง Event ตอน Key หมดอายุ

@@ -68,20 +68,17 @@ func GetScreeningDetails(c *gin.Context) {
 
 	// Redis Lock check
 	lockService := services.NewLockService()
-	lockedSeats, _ := lockService.GetLockedSeats(screening.ID)
-	lockedMap := make(map[string]bool)
-	for _, sid := range lockedSeats {
-		lockedMap[sid] = true
-	}
+	lockedSeatsMap, _ := lockService.GetLockedSeats(screening.ID)
 
 	// Merge Status
 	seatsCopy := make([]models.Seat, len(screening.Seats))
 	copy(seatsCopy, screening.Seats)
 
 	for i := range seatsCopy {
-		if lockedMap[seatsCopy[i].ID] {
+		if userID, ok := lockedSeatsMap[seatsCopy[i].ID]; ok {
 			if seatsCopy[i].Status == models.SeatAvailable {
 				seatsCopy[i].Status = "LOCKED"
+				seatsCopy[i].LockedBy = userID
 			}
 		}
 	}

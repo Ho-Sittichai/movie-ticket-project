@@ -48,10 +48,11 @@ const (
 )
 
 type Seat struct {
-	ID     string     `bson:"id" json:"id"`
-	Row    string     `bson:"row" json:"row"`
-	Number int        `bson:"number" json:"number"`
-	Status SeatStatus `bson:"status" json:"status"`
+	ID       string     `bson:"id" json:"id"`
+	Row      string     `bson:"row" json:"row"`
+	Number   int        `bson:"number" json:"number"`
+	Status   SeatStatus `bson:"status" json:"status"`
+	LockedBy string     `bson:"-" json:"locked_by,omitempty"` // Transient field for API response
 }
 
 type Booking struct {

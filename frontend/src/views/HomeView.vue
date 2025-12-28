@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import api from '../services/api'
+import { movieApi } from '../services/api' // using named export
 
 const router = useRouter()
 const movies = ref<any[]>([])
@@ -11,7 +11,7 @@ const error = ref<string | null>(null)
 const fetchMovies = async () => {
   try {
     loading.value = true
-    const response = await api.get('/movies')
+    const response = await movieApi.getAll()
     movies.value = response.data
   } catch (err: any) {
     console.error('Failed to fetch movies:', err)

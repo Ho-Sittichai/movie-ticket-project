@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import api from '../services/api'
+import { screeningApi, seatApi } from '../services/api'
 import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
@@ -41,10 +41,7 @@ const fetchScreening = async () => {
     console.log("Fetching screening for movie:", movieId, "at time:", startTime)
 
     // POST Request with object
-    const res = await api.post(`/screenings/details`, {
-      movie_id: movieId,
-      start_time: startTime
-    })
+    const res = await screeningApi.getDetails(movieId, startTime)
     const data = res.data
     
     const screeningData = data.screening || data
@@ -64,12 +61,19 @@ const fetchScreening = async () => {
     const uniqueRows = Array.from(new Set(rawSeats.map((s: any) => s.row))).sort() as string[]
     rows.value = uniqueRows
 
-    seats.value = rawSeats.map((s: any) => ({
-      id: s.id,
-      row: s.row,
-      number: s.number,
-      status: s.status 
-    }))
+    seats.value = rawSeats.map((s: any) => {
+      let status = s.status
+      // Check if locked by me
+      if (status === 'LOCKED' && s.locked_by && authStore.user && s.locked_by === authStore.user.user_id) {
+         status = 'SELECTED'
+      }
+      return {
+        id: s.id,
+        row: s.row,
+        number: s.number,
+        status: status 
+      }
+    })
 
   } catch (error) {
     console.error("Failed to fetch screening:", error)
@@ -109,12 +113,7 @@ const toggleSeat = async (seat: any) => {
     const movieId = route.params.movieId as string
     const startTime = route.query.time as string
     
-    const res = await api.post('/seats/lock', {
-      user_id: authStore.user.user_id, // Ensure this matches Store structure
-      movie_id: movieId,
-      start_time: startTime,
-      seat_id: seat.id
-    })
+    const res = await seatApi.lock(authStore.user.user_id, movieId, startTime, seat.id)
 
     if (res.status === 200) {
        // Backend returns "status": "LOCKED" or "AVAILABLE"
@@ -201,12 +200,7 @@ const confirmBooking = async () => {
      const movieId = route.params.movieId as string
      const startTime = route.query.time as string
      
-     const res = await api.post('/seats/book', {
-       user_id: authStore.user.user_id,
-       movie_id: movieId,
-       start_time: startTime,
-       seat_id: seatToBook.id
-     })
+     const res = await seatApi.book(authStore.user.user_id, movieId, startTime, seatToBook.id)
      
      if (res.status === 200) {
        alert("Booking Success!")
@@ -223,7 +217,7 @@ const confirmBooking = async () => {
   <div class="min-h-screen pb-32">
     <!-- Header Info -->
     <div class="container mx-auto px-6 py-6 flex items-center gap-4">
-      <button @click="router.back()" class="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white transition-colors">
+      <button @click="router.push('/')" class="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white transition-colors">
         &larr;
       </button>
       <div>
@@ -276,12 +270,15 @@ const confirmBooking = async () => {
     </div>
 
     <!-- Legend -->
-    <div class="flex justify-center gap-8 mt-12 text-sm text-gray-400">
+    <div class="flex justify-center gap-6 md:gap-8 mt-12 text-[10px] md:text-sm text-gray-400">
       <div class="flex items-center gap-2">
         <div class="w-4 h-4 rounded bg-gray-700"></div> Available
       </div>
       <div class="flex items-center gap-2">
         <div class="w-4 h-4 rounded bg-brand-red shadow-lg shadow-brand-red/40"></div> Selected
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="w-4 h-4 rounded bg-red-900/50 border border-red-900"></div> Locked
       </div>
       <div class="flex items-center gap-2">
         <div class="w-4 h-4 rounded bg-white/5"></div> Booked
