@@ -125,6 +125,7 @@ func BookSeat(c *gin.Context) {
 		MovieID   string   `json:"movie_id"`
 		StartTime string   `json:"start_time"`
 		SeatIDs   []string `json:"seat_ids"`
+		PaymentID string   `json:"payment_id"` // [NEW] Payment Reference
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -143,6 +144,7 @@ func BookSeat(c *gin.Context) {
 	bookingCollection := database.Mongo.Collection("bookings")
 
 	bookedCount := 0
+	var successfulBookings []models.Booking // Collect bookings for group email
 
 	for _, seatID := range req.SeatIDs {
 		// 1. Check Lock
@@ -197,31 +199,33 @@ func BookSeat(c *gin.Context) {
 			ScreenStartTime: req.StartTime,
 			SeatID:          seatID,
 			Status:          "SUCCESS",
-			Amount:          120, // Should fetch price from screening
+			PaymentID:       req.PaymentID, // [NEW] Save Payment Reference
+			Amount:          120,           // Should fetch price from screening
 			CreatedAt:       time.Now(),
 		}
 		bookingCollection.InsertOne(context.TODO(), booking)
 
 		bookedCount++
+		successfulBookings = append(successfulBookings, booking)
 
 		// 4. Unlock Redis
 		lockService.UnlockSeat(screeningID, seatID)
 
-		// 5. Events (Async to prevent blocking)
-		go func(sID, stID string, b models.Booking) {
-			services.GetQueueService().PublishEvent("BOOKING_SUCCESS", b)
-			services.WSHub.Broadcast <- services.SeatUpdateMessage{
-				ScreeningID: sID,
-				SeatID:      stID,
-				Status:      "BOOKED",
-			}
-		}(screeningID, seatID, booking)
+		// 5. Update WS (Still update seat status individually for real-time UI)
+		services.WSHub.Broadcast <- services.SeatUpdateMessage{
+			ScreeningID: screeningID,
+			SeatID:      seatID,
+			Status:      "BOOKED",
+		}
 	}
 
 	if bookedCount == 0 {
 		c.JSON(409, gin.H{"error": "Failed to book any seats (locks expired?)"})
 		return
 	}
+
+	// [NEW] Group Email Event
+	services.GetQueueService().PublishEvent("BOOKING_GROUP_SUCCESS", successfulBookings)
 
 	// [AUDIT LOG] Booking Success
 	services.LogInfo("BOOKING_SUCCESS", userID, map[string]interface{}{
@@ -230,6 +234,7 @@ func BookSeat(c *gin.Context) {
 		"screen_start_time": req.StartTime,
 		"seat_ids":          req.SeatIDs,
 		"booked_count":      bookedCount,
+		"payment_id":        req.PaymentID, // [NEW] Log payment ID
 	})
 
 	// Release Payment Lock

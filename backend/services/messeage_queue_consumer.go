@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -111,21 +112,61 @@ func handleMQMessage(msg *sarama.ConsumerMessage) {
 	fmt.Printf("MQ [RECEIVED]: Type=%s\n", event.Type)
 
 	switch event.Type {
+	case "BOOKING_GROUP_SUCCESS": // [NEW] Group Event
+		triggerGroupNotification(event.Payload)
 	case "BOOKING_SUCCESS":
-		// ถ้าจองสำเร็จ -> ส่งแจ้งเตือนลูกค้า
-		triggerNotification(event.Payload)
+		// Legacy support or fallback (Optional, can remove if unused)
+		log.Println("MQ [WARN] Received legacy BOOKING_SUCCESS event, ignoring in favor of GROUP.")
 	case "AUDIT_LOG":
-		// ถ้าเป็นประวัติระบบ -> บันทึกลง MongoDB
 		saveAuditToMongo(event.Payload)
 	default:
 		log.Printf("MQ [IGNORED]: Unknown event type: %s", event.Type)
 	}
 }
 
-// triggerNotification จำลองการส่งแจ้งเตือน (Email/SMS)
-func triggerNotification(payload interface{}) {
-	// ของจริงอาจจะยิง API ไปหา SendGrid / Twilio
-	log.Printf("MQ [NOTIFICATION]: Sending confirmation email... Booking Details: %v", payload)
+// triggerGroupNotification จัดการส่งเมลแบบกลุ่ม
+func triggerGroupNotification(payload interface{}) {
+	if database.Mongo == nil {
+		return
+	}
+
+	// 1. แปลง Payload กลับเป็น []Booking Struct
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("MQ [EMAIL ERROR]: Failed to marshal payload: %v", err)
+		return
+	}
+	var bookings []models.Booking
+	if err := json.Unmarshal(data, &bookings); err != nil {
+		log.Printf("MQ [EMAIL ERROR]: Failed to unmarshal to []Booking: %v", err)
+		return
+	}
+
+	if len(bookings) == 0 {
+		return
+	}
+	firstBooking := bookings[0]
+
+	// 2. ดึงข้อมูล User (เพื่อเอา Email)
+	userObjID, _ := primitive.ObjectIDFromHex(firstBooking.UserID)
+	var user models.User
+	err = database.Mongo.Collection("users").FindOne(context.TODO(), bson.M{"_id": userObjID}).Decode(&user)
+	if err != nil {
+		log.Printf("MQ [EMAIL ERROR]: User not found for ID %s: %v", firstBooking.UserID, err)
+		user.Name = "Unknown Customer"
+		user.Email = "unknown@example.com"
+	}
+
+	// 3. ดึงข้อมูลหนัง (เพื่อเอาชื่อหนัง)
+	var movie models.Movie
+	err = database.Mongo.Collection("movies").FindOne(context.TODO(), bson.M{"screenings.id": firstBooking.ScreeningID}).Decode(&movie)
+	if err != nil {
+		log.Printf("MQ [EMAIL WARN]: Movie not found for Screening ID %s", firstBooking.ScreeningID)
+		movie.Title = "Unknown Movie"
+	}
+
+	// 4. ส่งเมลกลุ่ม (จำลอง/จริง)
+	GetEmailService().SendGroupTicketEmail(user, bookings, movie.Title)
 }
 
 // saveAuditToMongo บันทึกข้อมูลลง Audit Log ใน MongoDB

@@ -236,12 +236,14 @@ const confirmBooking = async () => {
     const movieId = route.params.movieId as string;
     const startTime = route.query.time as string;
     const seatIds = selectedSeats.value.map((s) => s.id);
+    const paymentId = `BILL-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
     const res = await seatApi.book(
       authStore.user.user_id,
       movieId,
       startTime,
-      seatIds
+      seatIds,
+      paymentId
     );
 
     if (res.status === 200) {

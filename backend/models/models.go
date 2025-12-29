@@ -62,6 +62,7 @@ type Booking struct {
 	ScreenStartTime string             `bson:"screen_start_time" json:"screen_start_time"`
 	SeatID          string             `bson:"seat_id" json:"seat_id"`
 	Status          string             `bson:"status" json:"status"`
+	PaymentID       string             `bson:"payment_id" json:"payment_id"` // [NEW] Payment Reference
 	Amount          float64            `bson:"amount" json:"amount"`
 	CreatedAt       time.Time          `bson:"created_at" json:"created_at"`
 }
