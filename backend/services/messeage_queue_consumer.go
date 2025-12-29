@@ -14,22 +14,58 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// StartQueueConsumer ทำหน้าที่เปิด "หู" คอยฟังข่าวสารจาก Kafka แบบทำงานเบื้องหลัง (Background)
+// Consumer คือ Struct ที่ทำหน้าที่เป็นตัวแทนของ Consumer Group (คนรับสารแบบกลุ่ม)
+type Consumer struct{}
+
+// Setup ทำงาน 1 ครั้งตอนเริ่ม Session (ก่อนเริ่มดึงข้อความ)
+// ส่วนใหญ่เอาไว้ Connect Database หรือเตรียมตัวแปร
+func (consumer *Consumer) Setup(sarama.ConsumerGroupSession) error {
+	return nil
+}
+
+// Cleanup ทำงาน 1 ครั้งตอนจบ Session (หลังจากหยุดดึงข้อความ)
+// เอาไว้ปิด Connection หรือ Save State ครั้งสุดท้าย
+func (consumer *Consumer) Cleanup(sarama.ConsumerGroupSession) error {
+	return nil
+}
+
+// ConsumeClaim คือ "หัวใจหลัก" ของการทำงาน
+// ฟังก์ชันนี้จะถูกเรียกเมื่อ Consumer ได้รับสิทธิ์ในการอ่าน Partition นั้นๆ
+func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	// NOTE: ห้ามใช้ go routine ในนี้ (เช่น go func()...) เพราะ library มันจัดการให้แล้ว
+	// เราแค่ loop อ่านข้อความจาก claim.Messages() ก็พอ
+	for message := range claim.Messages() {
+		// 1. ประมวลผลข้อความ (เช่น ส่งเมล, บันทึก logs)
+		handleMQMessage(message)
+
+		// 2. บอก Kafka ว่า "ทำเสร็จแล้วนะ" (Mark Offset)
+		// Kafka จะจดไว้ว่ากลุ่มนี้อ่านถึงไหนแล้ว ถ้า Restart จะได้มาทำต่อจากตรงนี้ ไม่เริ่มใหม่แต่ต้น
+		session.MarkMessage(message, "")
+	}
+	return nil
+}
+
+// StartQueueConsumer เริ่มต้นระบบรับข้อความแบบ Consumer Group (ทำงานเบื้องหลัง)
 func StartQueueConsumer() {
 	cfg := sarama.NewConfig()
 	cfg.Consumer.Return.Errors = true
-	cfg.Consumer.Offsets.Initial = sarama.OffsetOldest // อ่านตั้งแต่ข้อความแรกสุด (Backlog)
+	// OffsetOldest: ถ้าเป็นกลุ่มใหม่ที่ไม่เคยจดจำ ให้เริ่มอ่านตั้งแต่ข้อความแรกสุด (กันตกหล่น)
+	// แต่ถ้าเคยจดจำแล้ว (MarkMessage) มันจะอ่านต่อจากเดิมให้อัตโนมัติ
+	cfg.Consumer.Offsets.Initial = sarama.OffsetOldest
+	cfg.Consumer.Group.Rebalance.Strategy = sarama.BalanceStrategyRoundRobin
 
-	var consumer sarama.Consumer
+	var consumerGroup sarama.ConsumerGroup
 	var err error
 
-	// วนลูปพยายามเริ่มระบบ (เช่นเดียวกับฝั่ง Producer)
+	// วนลูปพยายามเชื่อมต่อ Kafka (เผื่อ Kafka ยังไม่ตื่น)
 	for i := 0; i < 10; i++ {
-		consumer, err = sarama.NewConsumer([]string{config.AppConfig.KafkaBrokers}, cfg)
+		// GROUP ID: "movie-ticket-backend-group"
+		// สำคัญมาก! ต้องตั้งชื่อกลุ่มให้เหมือนเดิมตลอด Kafka ถึงจะจำได้ว่ากลุ่มนี้อ่านถึงไหนแล้ว
+		consumerGroup, err = sarama.NewConsumerGroup([]string{config.AppConfig.KafkaBrokers}, "movie-ticket-backend-group", cfg)
 		if err == nil {
 			break
 		}
-		log.Printf("Failed to start Kafka consumer, retrying... %v", err)
+		log.Printf("Failed to start Kafka consumer group, retrying... %v", err)
 		time.Sleep(2 * time.Second)
 	}
 
@@ -38,33 +74,30 @@ func StartQueueConsumer() {
 		return
 	}
 
-	// เลือกฟังเฉพาะ Topic "booking_events" (Partition 0)
-	partitionConsumer, err := consumer.ConsumePartition("booking_events", 0, sarama.OffsetOldest)
-	if err != nil {
-		log.Printf("Failed to consume partition: %v", err)
-		return
-	}
+	fmt.Println("MQ: Queue Consumer Group started (Kafka)...")
 
-	fmt.Println("MQ: Queue Consumer started (Kafka)...")
+	// รันลูปการทำงานใน Background (Goroutine)
+	ctx := context.Background()
+	consumer := &Consumer{}
 
-	// รันลูปเช็คข้อความเข้าแบบตลอดเวลา
 	go func() {
-		defer consumer.Close()
-		defer partitionConsumer.Close()
-
+		defer consumerGroup.Close()
 		for {
-			select {
-			case msg := <-partitionConsumer.Messages():
-				// เมื่อมีจดหมายเข้ามา ส่งไปประมวลผลต่อ
-				handleMQMessage(msg)
-			case err := <-partitionConsumer.Errors():
-				log.Printf("MQ Error: %v", err)
+			// userGroup.Consume เป็น Blocking Call (ทำงานค้างไว้ยาวๆ)
+			// ถ้ามีการ Rebalance หรือ Connection หลุด มันจะ return error ออกมา
+			if err := consumerGroup.Consume(ctx, []string{"booking_events"}, consumer); err != nil {
+				log.Printf("MQ Error from consumer: %v", err)
+				time.Sleep(2 * time.Second) // รอแป๊บแล้วค่อย connect ใหม่
+			}
+			// ถ้า Context ถูกยกเลิก (เช่น ปิดโปรแกรม) ให้จบการทำงาน
+			if ctx.Err() != nil {
+				return
 			}
 		}
 	}()
 }
 
-// handleMQMessage ทำหน้าที่ "คัดแยกประเภท" ของจดหมายที่ได้รับ
+// handleMQMessage ฟังก์ชันแยกประเภทข้อความและส่งไปทำงานต่อ
 func handleMQMessage(msg *sarama.ConsumerMessage) {
 	log.Printf("MQ [RAW]: Received message value: %s", string(msg.Value))
 
@@ -82,20 +115,20 @@ func handleMQMessage(msg *sarama.ConsumerMessage) {
 		// ถ้าจองสำเร็จ -> ส่งแจ้งเตือนลูกค้า
 		triggerNotification(event.Payload)
 	case "AUDIT_LOG":
-		// ถ้าเป็นประวัติระบบ -> บันทึกลง MongoDB แบบ Async
+		// ถ้าเป็นประวัติระบบ -> บันทึกลง MongoDB
 		saveAuditToMongo(event.Payload)
 	default:
 		log.Printf("MQ [IGNORED]: Unknown event type: %s", event.Type)
 	}
 }
 
-// triggerNotification (Requirement) จำลองการส่งข้อความแจ้งเตือน (Email/SMS)
+// triggerNotification จำลองการส่งแจ้งเตือน (Email/SMS)
 func triggerNotification(payload interface{}) {
-	// ในระบบจริง จะเรียกใช้ API ของพวก SendGrid หรือ Twilio ที่นี่
+	// ของจริงอาจจะยิง API ไปหา SendGrid / Twilio
 	log.Printf("MQ [NOTIFICATION]: Sending confirmation email... Booking Details: %v", payload)
 }
 
-// saveAuditToMongo (Requirement) บันทึกประวัติลง MongoDB แบบทำงานเบื้องหลัง (Async Logging)
+// saveAuditToMongo บันทึกข้อมูลลง Audit Log ใน MongoDB
 func saveAuditToMongo(payload interface{}) {
 	if database.Mongo == nil {
 		log.Printf("MQ [LOG ERROR]: MongoDB connection is NIL")
@@ -103,7 +136,6 @@ func saveAuditToMongo(payload interface{}) {
 	}
 	collection := database.Mongo.Collection("audit_logs")
 
-	// แปลงข้อมูล Payload กลับเป็นรูปแบบ AuditLog
 	data, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("MQ [LOG ERROR]: Failed to marshal payload: %v", err)
@@ -117,14 +149,13 @@ func saveAuditToMongo(payload interface{}) {
 		return
 	}
 
-	// FIX: Handle ObjectID explicitly if it's zero
+	// ถ้าไม่มี ID ให้สร้างใหม่ (กัน Error)
 	if logEntry.ID.IsZero() {
 		logEntry.ID = primitive.NewObjectID()
 	}
 
 	log.Printf("MQ [DEBUG]: Attempting to insert AuditLog: %+v", logEntry)
 
-	// บันทึกลงฐานข้อมูล
 	_, err = collection.InsertOne(context.Background(), logEntry)
 	if err != nil {
 		log.Printf("MQ [LOG ERROR]: Failed to save to Mongo: %v", err)
