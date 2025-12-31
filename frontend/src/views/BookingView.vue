@@ -160,8 +160,8 @@ const toggleSeat = async (seat: any) => {
     return;
   }
 
+  const originalStatus = seat.status;
   try {
-    const originalStatus = seat.status;
     seat.status = "LOADING"; // Optimistic UI
 
     const movieId = route.params.movieId as string;
@@ -187,7 +187,7 @@ const toggleSeat = async (seat: any) => {
     }
   } catch (e: any) {
     console.error("Lock error", e);
-    seat.status = "AVAILABLE"; // Simplify revert
+    seat.status = originalStatus; // Correct revert to previous state
     if (e.response && e.response.status === 409) {
       toast.warning(e.response.data.error);
     } else {
