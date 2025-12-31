@@ -93,7 +93,6 @@ const openDatePicker = () => {
     try {
       dateInputRef.value.showPicker();
     } catch (e) {
-      // Fallback for browsers that don't support showPicker (though most do now)
       console.log("Date picker programmatic open not supported");
     }
   }

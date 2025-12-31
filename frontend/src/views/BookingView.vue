@@ -63,12 +63,6 @@ const fetchScreening = async () => {
 
     const movieId = route.params.movieId as string;
     const startTime = route.query.time as string; // Passed as query
-    console.log(
-      "Fetching screening for movie:",
-      movieId,
-      "at time:",
-      startTime
-    );
 
     // POST Request with object
     const res = await api.post(`/screenings/details`, {

@@ -10,6 +10,7 @@ import (
 	"movie-ticket-backend/models"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,13 +37,18 @@ func getOAuthConfig() *oauth2.Config {
 }
 
 func GoogleLogin(c *gin.Context) {
-	url := getOAuthConfig().AuthCodeURL("random-state") // Mock up code for call
+	redirectTo := c.Query("redirect_to")
+	if redirectTo == "" {
+		redirectTo = "http://localhost:5173/"
+	}
+	// Use redirectTo as state. In production, sign/encrypt this!
+	url := getOAuthConfig().AuthCodeURL(redirectTo)
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
 func GoogleCallback(c *gin.Context) {
 	state := c.Query("state")
-	if state != "random-state" {
+	if state == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state"})
 		return
 	}
@@ -134,8 +140,34 @@ func GoogleCallback(c *gin.Context) {
 	// Generate Redirect (passing real data)
 	appToken := "real-jwt-" + user.ID.Hex() // Use specific name to avoid collision
 
-	redirectURL := fmt.Sprintf("http://localhost:5173/?google_auth=success&token=%s&user_id=%s&role=%s&name=%s&picture=%s&email=%s",
-		appToken, user.ID.Hex(), user.Role, url.QueryEscape(user.Name), url.QueryEscape(user.PictureURL), url.QueryEscape(user.Email))
+	// Parse the state back to a URL
+	parsedState, err := url.Parse(state)
+	var finalRedirectBase string
+	if err != nil || parsedState.Host == "" {
+		finalRedirectBase = "http://localhost:5173/"
+	} else {
+		// Clean existing auth params to avoid duplicates
+		q := parsedState.Query()
+		q.Del("google_auth")
+		q.Del("token")
+		q.Del("user_id")
+		q.Del("role")
+		q.Del("name")
+		q.Del("picture")
+		q.Del("email")
+		parsedState.RawQuery = q.Encode()
+		finalRedirectBase = parsedState.String()
+	}
+
+	// Join with data params
+	separator := "?"
+	if strings.Contains(finalRedirectBase, "?") {
+		separator = "&"
+	}
+
+	redirectURL := fmt.Sprintf("%s%sgoogle_auth=success&token=%s&user_id=%s&role=%s&name=%s&picture=%s&email=%s",
+		finalRedirectBase, separator, appToken, user.ID.Hex(), user.Role,
+		url.QueryEscape(user.Name), url.QueryEscape(user.PictureURL), url.QueryEscape(user.Email))
 
 	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }
