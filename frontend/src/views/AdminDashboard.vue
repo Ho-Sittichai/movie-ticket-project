@@ -201,7 +201,17 @@ const doughnutChartOptions = {
 
 // --- Methods ---
 const fetchData = async () => {
-  await Promise.all([fetchBookings()]);
+  await Promise.all([fetchMovies(), fetchBookings()]);
+};
+
+const fetchMovies = async () => {
+  try {
+    const res = await fetch("http://localhost:8080/api/movies");
+    const data = await res.json();
+    movies.value = data;
+  } catch (err) {
+    console.error("Failed to load movies", err);
+  }
 };
 
 const fetchBookings = async () => {
