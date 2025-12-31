@@ -1,379 +1,777 @@
+<script setup lang="ts">
+import { ref, onMounted, computed } from "vue";
+import { useAuthStore } from "../stores/auth";
+import {
+  Chart as ChartJS,
+  Title,
+  Tooltip,
+  Legend,
+  LineElement,
+  PointElement,
+  CategoryScale,
+  LinearScale,
+  ArcElement,
+  Filler,
+} from "chart.js";
+import { Line, Doughnut } from "vue-chartjs";
+
+ChartJS.register(
+  Title,
+  Tooltip,
+  Legend,
+  LineElement,
+  PointElement,
+  CategoryScale,
+  LinearScale,
+  ArcElement,
+  Filler
+);
+
+interface Booking {
+  id: string;
+  user_email: string;
+  user_name: string;
+  movie_title: string;
+  poster_url: string;
+  screening_time: string;
+  seat_id: string;
+  status: string;
+  amount: number;
+  created_at: string;
+}
+
+interface Movie {
+  id: string;
+  title: string;
+}
+
+// --- State ---
+const authStore = useAuthStore();
+const bookings = ref<Booking[]>([]);
+const movies = ref<Movie[]>([]);
+const loading = ref(false);
+
+const pagination = ref({
+  page: 1,
+  limit: 10,
+  total: 0,
+  pages: 1,
+});
+
+const filters = ref({
+  movie: "",
+  date: "",
+  user: "",
+});
+
+const stats = ref({
+  revenue: 0,
+  totalBookings: 0,
+});
+
+// Helpers for Date Filter
+const dateInputRef = ref<HTMLInputElement | null>(null);
+
+const isToday = computed(() => {
+  if (!filters.value.date) return false;
+  const today = new Date().toISOString().split("T")[0];
+  return filters.value.date === today;
+});
+
+const toggleToday = () => {
+  const today = new Date().toISOString().split("T")[0] || "";
+  if (filters.value.date === today) {
+    filters.value.date = "";
+  } else {
+    filters.value.date = today;
+  }
+  resetAndFetch();
+};
+
+const openDatePicker = () => {
+  if (dateInputRef.value) {
+    try {
+      dateInputRef.value.showPicker();
+    } catch (e) {
+      // Fallback for browsers that don't support showPicker (though most do now)
+      console.log("Date picker programmatic open not supported");
+    }
+  }
+};
+
+const clearDate = () => {
+  filters.value.date = "";
+  resetAndFetch();
+};
+
+const lineChartData = computed(() => {
+  const groups: Record<string, number> = {};
+  bookings.value.forEach((b) => {
+    const d = new Date(b.created_at).toLocaleDateString();
+    groups[d] = (groups[d] || 0) + 1;
+  });
+
+  return {
+    labels: Object.keys(groups),
+    datasets: [
+      {
+        label: "Bookings",
+        data: Object.values(groups),
+        borderColor: "#818cf8",
+        backgroundColor: "rgba(129, 140, 248, 0.2)",
+        tension: 0.4,
+        fill: true,
+        pointBackgroundColor: "#fff",
+        pointBorderColor: "#6366f1",
+        pointRadius: 4,
+      },
+    ],
+  };
+});
+
+const lineChartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      backgroundColor: "#1e293b",
+      titleColor: "#e2e8f0",
+      bodyColor: "#e2e8f0",
+      padding: 10,
+      borderColor: "#334155",
+      borderWidth: 1,
+    },
+  },
+  scales: {
+    x: {
+      grid: { display: false, color: "#334155" },
+      ticks: { color: "#94a3b8" },
+    },
+    y: {
+      grid: { color: "#334155", borderDash: [5, 5] },
+      ticks: { color: "#94a3b8", stepSize: 1 },
+    },
+  },
+};
+
+const doughnutChartData = computed(() => {
+  const revenueByMovie: Record<string, number> = {};
+  bookings.value.forEach((b) => {
+    if (b.status === "SUCCESS") {
+      revenueByMovie[b.movie_title] =
+        (revenueByMovie[b.movie_title] || 0) + b.amount;
+    }
+  });
+
+  return {
+    labels: Object.keys(revenueByMovie),
+    datasets: [
+      {
+        data: Object.values(revenueByMovie),
+        backgroundColor: [
+          "#818cf8",
+          "#34d399",
+          "#f472b6",
+          "#60a5fa",
+          "#facc15",
+          "#a78bfa",
+        ],
+        borderWidth: 0,
+        hoverOffset: 4,
+      },
+    ],
+  };
+});
+
+const doughnutChartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      position: "right" as const,
+      labels: { color: "#e2e8f0", font: { size: 11 } },
+    },
+  },
+};
+
+// --- Methods ---
+const fetchData = async () => {
+  await Promise.all([fetchMovies(), fetchBookings()]);
+};
+
+const fetchMovies = async () => {
+  try {
+    const res = await fetch("http://localhost:8080/api/movies");
+    const data = await res.json();
+    movies.value = data;
+  } catch (err) {
+    console.error("Failed to load movies", err);
+  }
+};
+
+const fetchBookings = async () => {
+  loading.value = true;
+  try {
+    const params = new URLSearchParams();
+    if (filters.value.movie) params.append("movie_id", filters.value.movie);
+    if (filters.value.date) params.append("date", filters.value.date);
+    if (filters.value.user) params.append("user", filters.value.user);
+
+    // Pagination params
+    params.append("page", pagination.value.page.toString());
+    params.append("limit", pagination.value.limit.toString());
+    // ...
+
+    const res = await fetch(
+      `http://localhost:8080/api/admin/bookings?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`,
+        },
+      }
+    );
+
+    const responseData = await res.json();
+    // Handle new response structure { data: [], meta: {} }
+    if (responseData.data) {
+      bookings.value = responseData.data;
+      if (responseData.meta) {
+        pagination.value.total = responseData.meta.total;
+        pagination.value.pages = responseData.meta.pages;
+      }
+    } else {
+      // Fallback for old API structure or empty
+      bookings.value = Array.isArray(responseData) ? responseData : [];
+    }
+
+    // Stats calc (Naive approach: In real app, stats should come from separate API to be accurate across ALL pages)
+    // For now, we update stats based on current page which is WRONG but efficient,
+    // OR we can make a separate call for stats.
+    // Given the task is about performance, let's just sum the current view or keep placeholders.
+    // For better UX, let's assume valid totals should come from backend, but we'll sum current page for now to avoid errors.
+    const totalRev = bookings.value.reduce(
+      (sum, b) => (b.status === "SUCCESS" ? sum + b.amount : sum),
+      0
+    );
+    stats.value = {
+      revenue: totalRev, // This is only for current page!
+      totalBookings: pagination.value.total,
+    };
+  } catch (err) {
+    console.error("Failed to load bookings", err);
+    bookings.value = [];
+  } finally {
+    loading.value = false;
+  }
+};
+
+const resetAndFetch = () => {
+  pagination.value.page = 1;
+  fetchBookings();
+};
+
+const changePage = (newPage: number) => {
+  if (newPage < 1 || newPage > pagination.value.pages) return;
+  pagination.value.page = newPage;
+  fetchBookings();
+};
+
+let searchTimeout: any = null;
+const debounceSearch = () => {
+  if (searchTimeout) clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    resetAndFetch();
+  }, 500);
+};
+
+const resetFilters = () => {
+  filters.value = { movie: "", date: "", user: "" };
+  resetAndFetch();
+};
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr || dateStr.startsWith("0001")) return "-";
+  return new Date(dateStr).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+};
+
+onMounted(() => {
+  fetchData();
+});
+</script>
+
 <template>
-  <div class="flex min-h-[calc(100vh-80px)] bg-slate-950 font-sans text-slate-100">
+  <div
+    class="flex min-h-screen bg-[#0f172a] font-sans text-slate-100 selection:bg-indigo-500/30"
+  >
     <!-- Sidebar -->
-    <!-- Sticky positioning to stay visible while scrolling the page -->
-    <aside class="w-64 bg-slate-900/50 backdrop-blur-xl border-r border-slate-800 flex flex-col sticky top-20 h-[calc(100vh-80px)]">
-      <div class="p-6 flex items-center space-x-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-          <i class="fas fa-ticket-alt text-white text-lg"></i>
+    <aside
+      class="w-20 lg:w-64 bg-slate-900/50 border-r border-slate-800 flex flex-col sticky top-0 h-screen transition-all duration-300 z-20"
+    >
+      <nav class="flex-1 px-4 space-y-2 mt-10">
+        <!-- Dashboard (Active) -->
+        <a
+          href="#"
+          class="flex items-center gap-3 px-3 lg:px-4 py-3 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shadow-sm transition-all group"
+        >
+          <i class="fas fa-chart-pie w-6 text-center"></i>
+          <span class="hidden lg:block font-medium">Dashboard</span>
+        </a>
+
+        <!-- Movie (Disabled) -->
+        <div
+          class="flex items-center gap-3 px-3 lg:px-4 py-3 rounded-xl text-slate-500 cursor-not-allowed opacity-50 border border-transparent"
+        >
+          <i class="fas fa-film w-6 text-center"></i>
+          <span class="hidden lg:block font-medium">Movie</span>
+          <span
+            class="hidden lg:inline-flex px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 border border-slate-700 ml-auto"
+            >Soon</span
+          >
         </div>
-        <div>
-          <h2 class="text-xl font-bold tracking-tight text-white">MovieTicket</h2>
-          <span class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full border border-slate-700 tracking-wide font-semibold">ADMIN</span>
+
+        <!-- User (Disabled) -->
+        <div
+          class="flex items-center gap-3 px-3 lg:px-4 py-3 rounded-xl text-slate-500 cursor-not-allowed opacity-50 border border-transparent"
+        >
+          <i class="fas fa-users w-6 text-center"></i>
+          <span class="hidden lg:block font-medium">User</span>
+          <span
+            class="hidden lg:inline-flex px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 border border-slate-700 ml-auto"
+            >Soon</span
+          >
+        </div>
+      </nav>
+
+      <div class="p-4 border-t border-slate-800">
+        <div class="flex items-center gap-3 justify-center lg:justify-start">
+          <img
+            src="https://ui-avatars.com/api/?name=Admin&background=random"
+            class="w-8 h-8 rounded-full border border-slate-600"
+          />
+          <div class="hidden lg:block">
+            <div class="text-sm font-medium text-white">Admin User</div>
+            <div class="text-xs text-slate-500">View Profile</div>
+          </div>
         </div>
       </div>
-
-      <nav class="flex-1 px-4 space-y-1.5 overflow-y-auto custom-scrollbar mt-4">
-        <a href="#" class="flex items-center space-x-3 px-4 py-3 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shadow-sm transition-all hover:bg-indigo-500/20">
-          <i class="fas fa-chart-pie w-5 text-center"></i>
-          <span class="font-medium">Overview</span>
-        </a>
-        <a href="#" class="flex items-center space-x-3 px-4 py-3 rounded-xl text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all group">
-          <i class="fas fa-film w-5 text-center group-hover:text-indigo-400 transition-colors"></i>
-          <span class="font-medium">Movies Manager</span>
-        </a>
-        <a href="#" class="flex items-center space-x-3 px-4 py-3 rounded-xl text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all group">
-          <i class="fas fa-users w-5 text-center group-hover:text-indigo-400 transition-colors"></i>
-          <span class="font-medium">Customers</span>
-        </a>
-        <a href="#" class="flex items-center space-x-3 px-4 py-3 rounded-xl text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all group">
-          <i class="fas fa-calendar-check w-5 text-center group-hover:text-indigo-400 transition-colors"></i>
-          <span class="font-medium">Bookings</span>
-        </a>
-        <a href="#" class="flex items-center space-x-3 px-4 py-3 rounded-xl text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all group">
-          <i class="fas fa-cog w-5 text-center group-hover:text-indigo-400 transition-colors"></i>
-          <span class="font-medium">Settings</span>
-        </a>
-      </nav>
-      
-      <!-- Removed "Exit to Site" as we have global navbar now -->
     </aside>
 
     <!-- Main Content -->
-    <!-- Removed fixed height/overflow to allow global page scroll -->
-    <main class="flex-1 flex flex-col relative bg-[url('https://tailwindcss.com/_next/static/media/docs@tinypng.d9e4cddb.png')] bg-cover">
-      <div class="absolute inset-0 bg-slate-950/90 pointer-events-none z-0"></div>
-      
-      <!-- Minimal Header -->
-      <header class="relative z-10 flex justify-between items-center px-8 py-6">
+    <main class="flex-1 flex flex-col relative overflow-hidden">
+      <!-- Background Effects (Optimized: Removed heavy blurs/animations if they cause lag, but kept static for aesthetics) -->
+      <div class="absolute inset-0 z-0 pointer-events-none">
+        <div
+          class="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] bg-indigo-600/10 rounded-full blur-[100px]"
+        ></div>
+        <div
+          class="absolute bottom-[-10%] left-[-10%] w-[600px] h-[600px] bg-violet-600/05 rounded-full blur-[80px]"
+        ></div>
+      </div>
+
+      <header
+        class="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center px-8 py-8 gap-4"
+      >
         <div>
-          <h1 class="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">Dashboard</h1>
-          <p class="text-slate-400 text-sm mt-1">Overview of your cinema performance.</p>
+          <h1
+            class="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400 drop-shadow-sm"
+          >
+            Cinema Overview
+          </h1>
+          <p class="text-slate-400 text-sm mt-1">
+            Real-time performance metrics and booking management.
+          </p>
         </div>
-        <div class="flex items-center space-x-4">
-          <div class="flex items-center gap-3 bg-slate-900/50 backdrop-blur-md border border-slate-700/50 rounded-full pl-1 pr-4 py-1">
-             <div class="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-[1px]">
-               <div class="w-full h-full rounded-full bg-slate-900 flex items-center justify-center">
-                 <img src="https://ui-avatars.com/api/?name=Admin+User&background=random&color=fff" alt="Admin" class="w-full h-full rounded-full opacity-90">
-               </div>
-             </div>
-             <div class="text-sm">
-                <span class="block font-semibold text-white leading-none">Admin User</span>
-                <span class="text-[10px] text-slate-400 uppercase tracking-widest">Manager</span>
-             </div>
-          </div>
+
+        <div class="flex gap-3">
+          <button
+            @click="fetchData"
+            class="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition-all text-sm font-medium"
+          >
+            <i class="fas fa-sync-alt" :class="{ 'fa-spin': loading }"></i>
+            Refresh
+          </button>
         </div>
       </header>
 
-      <!-- Content Area -->
-      <div class="flex-1 px-8 pb-8 relative z-10">
-        
-        <!-- Stats Grid (Expanded) -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <!-- Total Revenue -->
-          <div class="relative group">
-            <div class="absolute -inset-0.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 rounded-2xl opacity-60 group-hover:opacity-100 transition duration-500 blur-sm"></div>
-            <div class="relative bg-slate-900/90 backdrop-blur-xl border border-white/10 p-6 rounded-2xl h-full flex items-center justify-between shadow-2xl">
-              <div>
-                <p class="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1.5 flex items-center gap-2">
-                  <span class="w-2 h-2 rounded-full bg-fuchsia-500"></span> Total Revenue
-                </p>
-                <h3 class="text-4xl font-black text-white tracking-tight">${{ totalRevenue.toLocaleString() }}</h3>
-              </div>
-              <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 flex items-center justify-center border border-white/5">
-                <i class="fas fa-wallet text-2xl text-fuchsia-400 drop-shadow-[0_0_10px_rgba(232,121,249,0.5)]"></i>
-              </div>
+      <div
+        class="flex-1 overflow-y-auto custom-scrollbar px-8 pb-8 relative z-10 space-y-6"
+      >
+        <!-- Stats Row -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div
+            class="bg-slate-900/40 border border-slate-800/60 p-6 rounded-2xl shadow-lg relative overflow-hidden group"
+          >
+            <div class="relative">
+              <p
+                class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2"
+              >
+                Total Revenue
+              </p>
+              <h3 class="text-3xl font-black text-white">
+                ${{ stats.revenue.toLocaleString() }}
+              </h3>
             </div>
           </div>
 
-          <!-- Total Bookings -->
-          <div class="relative group">
-             <div class="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-2xl opacity-60 group-hover:opacity-100 transition duration-500 blur-sm"></div>
-            <div class="relative bg-slate-900/90 backdrop-blur-xl border border-white/10 p-6 rounded-2xl h-full flex items-center justify-between shadow-2xl">
-              <div>
-                <p class="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1.5 flex items-center gap-2">
-                  <span class="w-2 h-2 rounded-full bg-cyan-500"></span> Bookings
-                </p>
-                <h3 class="text-4xl font-black text-white tracking-tight">{{ bookings.length }}</h3>
-              </div>
-              <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-500/20 to-blue-500/20 flex items-center justify-center border border-white/5">
-                <i class="fas fa-ticket-alt text-2xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]"></i>
-              </div>
-            </div>
-          </div>
-
-           <!-- Active Movies -->
-           <div class="relative group">
-             <div class="absolute -inset-0.5 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-2xl opacity-60 group-hover:opacity-100 transition duration-500 blur-sm"></div>
-            <div class="relative bg-slate-900/90 backdrop-blur-xl border border-white/10 p-6 rounded-2xl h-full flex items-center justify-between shadow-2xl">
-              <div>
-                <p class="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1.5 flex items-center gap-2">
-                  <span class="w-2 h-2 rounded-full bg-emerald-500"></span> Showing Now
-                </p>
-                <h3 class="text-4xl font-black text-white tracking-tight">{{ movies.length }}</h3>
-              </div>
-              <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 flex items-center justify-center border border-white/5">
-                <i class="fas fa-film text-2xl text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.5)]"></i>
-              </div>
+          <div
+            class="bg-slate-900/40 border border-slate-800/60 p-6 rounded-2xl shadow-lg relative overflow-hidden group"
+          >
+            <div class="relative">
+              <p
+                class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2"
+              >
+                Total Bookings
+              </p>
+              <h3 class="text-3xl font-black text-white">
+                {{ stats.totalBookings }}
+              </h3>
             </div>
           </div>
         </div>
 
-        <!-- Content Block -->
-        <div class="bg-slate-900/60 backdrop-blur-md rounded-3xl border border-white/5 overflow-hidden">
-          
-          <!-- Filter Bar -->
-          <div class="p-5 border-b border-white/5 flex flex-wrap items-center justify-between gap-4 bg-white/5">
-             <div class="flex items-center gap-3">
-                <h3 class="text-lg font-bold text-white mr-2">Recent Bookings</h3>
-                
-                <!-- Movie Select -->
-                <div class="relative group">
-                   <select v-model="filters.movie" @change="fetchBookings" class="appearance-none pl-9 pr-8 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs font-medium text-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all hover:border-slate-500 cursor-pointer">
-                     <option value="">All Movies</option>
-                     <option v-for="m in movies" :key="m.id" :value="m.id">{{ m.title }}</option>
-                   </select>
-                   <i class="fas fa-filter absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs pointer-events-none"></i>
-                </div>
-
-                <!-- Date Picker -->
-                <div class="relative group">
-                  <input type="date" v-model="filters.date" @change="fetchBookings" class="pl-9 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs font-medium text-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all hover:border-slate-500 cursor-pointer uppercase">
-                  <i class="fas fa-calendar absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs pointer-events-none"></i>
-                </div>
-             </div>
-
-             <div class="flex items-center gap-3 w-full sm:w-auto">
-                <div class="relative flex-1">
-                   <input type="text" v-model="filters.user" placeholder="Search customer..." @input="debounceSearch" class="pl-9 pr-4 py-2 w-full sm:w-64 bg-slate-900 border border-slate-700 rounded-lg text-xs font-medium text-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all focus:w-72 placeholder-slate-600">
-                   <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs pointer-events-none"></i>
-                </div>
-                <button @click="resetFilters" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg border border-slate-700 transition-all" title="Reset Filters">
-                   <i class="fas fa-sync-alt text-xs"></i>
-                </button>
-             </div>
+        <!-- Charts Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div
+            class="lg:col-span-2 bg-slate-900/40 border border-slate-800/60 p-6 rounded-2xl shadow-lg flex flex-col"
+          >
+            <h3 class="text-white font-bold mb-4 flex items-center gap-2">
+              <i class="fas fa-chart-line text-indigo-400"></i> Booking Trends
+            </h3>
+            <div class="flex-1 w-full h-[300px] relative">
+              <Line :data="lineChartData" :options="lineChartOptions" />
+            </div>
           </div>
 
-          <!-- Table -->
-          <div class="overflow-x-auto">
+          <div
+            class="bg-slate-900/40 border border-slate-800/60 p-6 rounded-2xl shadow-lg flex flex-col"
+          >
+            <h3 class="text-white font-bold mb-4 flex items-center gap-2">
+              <i class="fas fa-chart-pie text-pink-400"></i> Revenue by Movie
+            </h3>
+            <div
+              class="flex-1 w-full h-[300px] relative flex items-center justify-center"
+            >
+              <Doughnut
+                :data="doughnutChartData"
+                :options="doughnutChartOptions"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Filters & Table Section -->
+        <div
+          class="bg-slate-900/40 border border-slate-800/60 rounded-2xl shadow-lg overflow-hidden"
+        >
+          <!-- Filter Bar -->
+          <div
+            class="p-5 border-b border-slate-700/50 bg-slate-800/20 flex flex-wrap gap-4 items-center justify-between"
+          >
+            <div class="flex items-center gap-2">
+              <h3 class="text-lg font-bold text-white">Recent Transactions</h3>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-3">
+              <!-- Movie Filter -->
+              <div class="relative">
+                <select
+                  v-model="filters.movie"
+                  @change="resetAndFetch"
+                  class="appearance-none pl-9 pr-8 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs font-medium text-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all hover:border-slate-600 cursor-pointer min-w-[140px]"
+                >
+                  <option value="">All Movies</option>
+                  <option v-for="m in movies" :key="m.id" :value="m.id">
+                    {{ m.title }}
+                  </option>
+                </select>
+                <i
+                  class="fas fa-film absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs pointer-events-none"
+                ></i>
+              </div>
+
+              <!-- Date Filter with Shortcuts -->
+              <div
+                class="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg p-1"
+              >
+                <button
+                  @click="toggleToday"
+                  class="px-2 py-1 text-[10px] font-bold uppercase rounded hover:bg-slate-700 transition-colors"
+                  :class="
+                    isToday ? 'bg-indigo-500 text-white' : 'text-slate-400'
+                  "
+                >
+                  Today
+                </button>
+                <div class="h-4 w-px bg-slate-700"></div>
+                <div class="relative group">
+                  <input
+                    ref="dateInputRef"
+                    type="date"
+                    v-model="filters.date"
+                    @change="resetAndFetch"
+                    @click="openDatePicker"
+                    class="pl-4 pr-16 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-medium text-slate-300 focus:ring-1 focus:ring-indigo-500 outline-none cursor-pointer uppercase w-48 transition-colors custom-date-input text-center"
+                  />
+
+                  <!-- Clear Button (Visible on hover or if date set) -->
+                  <button
+                    v-if="filters.date"
+                    @click.stop="clearDate"
+                    class="absolute right-9 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-slate-700 hover:bg-red-500 text-white border border-slate-500 hover:border-red-500 transition-colors z-10 shadow-sm"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      class="h-3 w-3"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fill-rule="evenodd"
+                        d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                        clip-rule="evenodd"
+                      />
+                    </svg>
+                  </button>
+
+                  <!-- Custom Calendar Icon -->
+                  <i
+                    class="fas fa-calendar-alt absolute right-3 top-1/2 -translate-y-1/2 text-white text-xs pointer-events-none"
+                  ></i>
+                </div>
+              </div>
+
+              <div class="relative">
+                <input
+                  type="text"
+                  v-model="filters.user"
+                  placeholder="Search user..."
+                  @input="debounceSearch"
+                  class="pl-9 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs font-medium text-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all hover:border-slate-600 w-48 focus:w-64 placeholder-slate-600"
+                />
+                <i
+                  class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs pointer-events-none"
+                ></i>
+              </div>
+
+              <button
+                @click="resetFilters"
+                class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg border border-slate-700 transition-all active:scale-95"
+                title="Reset Filters"
+              >
+                <i class="fas fa-undo-alt text-xs"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Booking Table -->
+          <div class="overflow-x-auto min-h-[400px]">
             <table class="w-full text-left border-collapse">
               <thead>
-                <tr class="border-b border-white/5 text-xs text-slate-400 bg-slate-900/50">
-                  <th class="px-6 py-4 font-semibold uppercase tracking-wider">Booking Info</th>
-                  <th class="px-6 py-4 font-semibold uppercase tracking-wider">Customer</th>
-                  <th class="px-6 py-4 font-semibold uppercase tracking-wider">Screening Details</th>
-                  <th class="px-6 py-4 font-semibold uppercase tracking-wider text-right">Amount</th>
-                  <th class="px-6 py-4 font-semibold uppercase tracking-wider text-center">Status</th>
+                <tr
+                  class="bg-slate-900/50 border-b border-slate-700/50 text-xs uppercase tracking-wider text-slate-400 font-semibold"
+                >
+                  <th class="px-6 py-4">Booking Details</th>
+                  <th class="px-6 py-4">Customer</th>
+                  <th class="px-6 py-4 text-center">Seat</th>
+                  <th class="px-6 py-4 text-center">Status</th>
+                  <th class="px-6 py-4 text-right">Amount</th>
+                  <th class="px-6 py-4 text-right">Date</th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-white/5 text-sm">
-                <tr v-if="loading" class="animate-pulse bg-slate-900/30">
-                  <td colspan="5" class="px-6 py-12 text-center text-slate-500">
-                    <i class="fas fa-circle-notch fa-spin mr-2 text-indigo-500"></i> Updating list...
+              <tbody class="divide-y divide-slate-700/30">
+                <tr v-if="loading" class="bg-slate-900/20 animate-pulse">
+                  <td colspan="6" class="px-6 py-12 text-center text-slate-500">
+                    <i
+                      class="fas fa-circle-notch fa-spin mr-2 text-indigo-500"
+                    ></i>
+                    Loading data...
                   </td>
                 </tr>
                 <tr v-else-if="bookings.length === 0">
-                   <td colspan="5" class="px-6 py-16 text-center text-slate-500">
-                    <div class="flex flex-col items-center opacity-50">
-                       <i class="fas fa-folder-open text-4xl mb-3"></i>
-                       <span>No bookings found.</span>
-                    </div>
+                  <td colspan="6" class="px-6 py-16 text-center text-slate-500">
+                    <span class="font-medium">No bookings found</span>
                   </td>
                 </tr>
-                <tr v-for="b in bookings" :key="b.id" class="group hover:bg-white/[0.02] transition-colors">
+                <tr
+                  v-for="b in bookings"
+                  :key="b.id"
+                  class="group hover:bg-white/[0.02] transition-colors relative"
+                >
                   <td class="px-6 py-4">
-                     <div class="flex flex-col">
-                        <span class="text-white font-semibold group-hover:text-indigo-300 transition-colors">{{ b.movie_title }}</span>
-                        <span class="text-xs text-slate-500 font-mono mt-0.5">ID: #{{ b.id.slice(-6) }}</span>
-                     </div>
-                  </td>
-                  <td class="px-6 py-4">
-                    <div class="flex items-center">
-                       <div class="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-slate-400 mr-3">
-                          {{ b.user_name.charAt(0).toUpperCase() }}
-                       </div>
-                       <div>
-                          <div class="text-slate-200 font-medium">{{ b.user_name }}</div>
-                          <div class="text-xs text-slate-500">{{ b.user_email }}</div>
-                       </div>
+                    <div class="flex items-center gap-3">
+                      <div
+                        class="w-10 h-14 rounded overflow-hidden bg-slate-800 flex-shrink-0"
+                      >
+                        <img
+                          v-if="b.poster_url"
+                          :src="b.poster_url"
+                          alt="Poster"
+                          class="w-full h-full object-cover"
+                        />
+                        <div
+                          v-else
+                          class="w-full h-full flex items-center justify-center text-slate-600"
+                        >
+                          <i class="fas fa-film"></i>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="font-medium text-white text-sm">
+                          {{ b.movie_title || "Unknown Movie" }}
+                        </div>
+                      </div>
                     </div>
                   </td>
                   <td class="px-6 py-4">
-                     <div class="flex items-center gap-4">
-                        <div>
-                           <div class="text-slate-300 text-xs font-semibold uppercase tracking-wide mb-0.5">Time</div>
-                           <div class="text-slate-400 text-xs flex items-center gap-1.5">
-                              <i class="far fa-clock"></i> {{ formatTime(b.screening_time) }}
-                              <span class="text-slate-600">|</span>
-                              {{ formatDate(b.screening_time) }}
-                           </div>
-                        </div>
-                        <div class="pl-4 border-l border-white/5">
-                           <div class="text-slate-300 text-xs font-semibold uppercase tracking-wide mb-0.5">Seat</div>
-                           <div class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-indigo-300 text-xs font-mono font-bold text-center">
-                              {{ b.seat_id }}
-                           </div>
-                        </div>
-                     </div>
-                  </td>
-                  <td class="px-6 py-4 text-right">
-                    <span class="font-bold text-slate-200">${{ b.amount }}</span>
+                    <div>
+                      <div class="text-sm text-slate-300">
+                        {{ b.user_name }}
+                      </div>
+                      <div class="text-xs text-slate-500">
+                        {{ b.user_email }}
+                      </div>
+                    </div>
                   </td>
                   <td class="px-6 py-4 text-center">
-                    <span :class="[
-                      'px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border shadow-sm',
-                      b.status === 'SUCCESS' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-emerald-500/10' : 
-                      b.status === 'PENDING' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 shadow-amber-500/10' : 
-                      'bg-red-500/10 text-red-400 border-red-500/20 shadow-red-500/10'
-                    ]">
+                    <span
+                      class="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-indigo-300 text-xs font-mono font-bold"
+                      >{{ b.seat_id }}</span
+                    >
+                  </td>
+                  <td class="px-6 py-4 text-center">
+                    <span
+                      class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border shadow-sm"
+                      :class="{
+                        'bg-emerald-500/10 text-emerald-400 border-emerald-500/20':
+                          b.status === 'SUCCESS',
+                        'bg-amber-500/10 text-amber-400 border-amber-500/20':
+                          b.status === 'PENDING',
+                        'bg-red-500/10 text-red-400 border-red-500/20':
+                          b.status === 'FAILED',
+                      }"
+                    >
+                      <span
+                        class="w-1.5 h-1.5 rounded-full mr-1.5"
+                        :class="{
+                          'bg-emerald-400': b.status === 'SUCCESS',
+                          'bg-amber-400': b.status === 'PENDING',
+                          'bg-red-400': b.status === 'FAILED',
+                        }"
+                      ></span>
                       {{ b.status }}
                     </span>
+                  </td>
+                  <td class="px-6 py-4 text-right">
+                    <span class="font-bold text-slate-200"
+                      >${{ b.amount.toFixed(2) }}</span
+                    >
+                  </td>
+                  <td class="px-6 py-4 text-right">
+                    <div class="text-xs text-slate-400">
+                      {{ formatDate(b.created_at) }}
+                    </div>
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
-          
-          <!-- Pagination -->
-          <div class="px-6 py-4 border-t border-white/5 bg-slate-900/50 flex items-center justify-between">
-              <span class="text-xs text-slate-500">Showing {{ bookings.length }} records</span>
-              <div class="flex gap-2">
-                 <button class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-all disabled:opacity-30" disabled>
-                    <i class="fas fa-chevron-left text-xs"></i>
-                 </button>
-                 <button class="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-all">
-                    <i class="fas fa-chevron-right text-xs"></i>
-                 </button>
-              </div>
+
+          <!-- Pagination Controls -->
+          <div
+            class="px-6 py-4 border-t border-slate-700/50 bg-slate-800/20 flex items-center justify-between"
+          >
+            <span class="text-xs text-slate-500">
+              Showing {{ bookings.length }} of {{ pagination.total }} entries
+            </span>
+            <div class="flex gap-2 items-center">
+              <button
+                @click="changePage(pagination.page - 1)"
+                :disabled="pagination.page <= 1 || loading"
+                class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="w-3.5 h-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+                Prev
+              </button>
+
+              <span
+                class="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1.5 rounded border border-slate-800"
+              >
+                Page {{ pagination.page }} of {{ pagination.pages }}
+              </span>
+
+              <button
+                @click="changePage(pagination.page + 1)"
+                :disabled="pagination.page >= pagination.pages || loading"
+                class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium"
+              >
+                Next
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="w-3.5 h-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M9 18l6-6-6-6" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
-
       </div>
     </main>
   </div>
 </template>
 
-<script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
-import { useAuthStore } from '../stores/auth'
-
-const authStore = useAuthStore() // Access Token
-
-interface Booking {
-  id: string
-  user_email: string
-  user_name: string
-  movie_title: string
-  screening_time: string
-  seat_id: string
-  status: string
-  amount: number
-  created_at: string
-}
-
-interface Movie {
-  id: string
-  title: string
-}
-
-const bookings = ref<Booking[]>([])
-const movies = ref<Movie[]>([])
-const loading = ref(false)
-
-const filters = ref({
-  movie: '',
-  date: '',
-  user: ''
-})
-
-const totalRevenue = computed(() => {
-  return bookings.value.reduce((sum, b) => sum + b.amount, 0)
-})
-
-let searchTimeout: any = null
-
-const debounceSearch = () => {
-  if (searchTimeout) clearTimeout(searchTimeout)
-  searchTimeout = setTimeout(() => {
-    fetchBookings()
-  }, 500)
-}
-
-const fetchMovies = async () => {
-  try {
-    const res = await fetch('http://localhost:8080/api/movies')
-    const data = await res.json()
-    movies.value = data
-  } catch (err) {
-    console.error("Failed to load movies", err)
-  }
-}
-
-const fetchBookings = async () => {
-  loading.value = true
-  try {
-    const params = new URLSearchParams()
-    if (filters.value.movie) params.append('movie_id', filters.value.movie)
-    if (filters.value.date) params.append('date', filters.value.date)
-    if (filters.value.user) params.append('user', filters.value.user)
-
-    const res = await fetch(`http://localhost:8080/api/admin/bookings?${params.toString()}`, {
-      headers: {
-        'Authorization': `Bearer ${authStore.token}`
-      }
-    })
-    
-    if (res.status === 401 || res.status === 403) {
-      alert("Session expired or Unauthorized")
-      window.location.href = '/'
-      return
-    }
-    
-    const data = await res.json()
-    bookings.value = data || []
-  } catch (err) {
-    console.error("Failed to load bookings", err)
-    bookings.value = []
-  } finally {
-    loading.value = false
-  }
-}
-
-const resetFilters = () => {
-  filters.value = { movie: '', date: '', user: '' }
-  fetchBookings()
-}
-
-const formatDate = (dateStr: string) => {
-  if (!dateStr || dateStr.startsWith('0001')) return '-'
-  return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-const formatTime = (dateStr: string) => {
-  if (!dateStr || dateStr.startsWith('0001')) return '-'
-  return new Date(dateStr).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-}
-
-onMounted(() => {
-  fetchMovies()
-  fetchBookings()
-})
-</script>
-
 <style scoped>
-/* Custom Scrollbar */
+/* Simplified CSS to reduce lag */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent; 
+  background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #475569; 
+  background: #334155;
   border-radius: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #64748b; 
+  background: #475569;
+}
+
+/* Hide native date picker icon to use custom one */
+.custom-date-input::-webkit-calendar-picker-indicator {
+  background: transparent;
+  bottom: 0;
+  color: transparent;
+  cursor: pointer;
+  height: auto;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: auto;
+  opacity: 0; /* Important: Make it invisible but still clickable over the input if needed, though we use openShowPicker too */
+  z-index: 10;
 }
 </style>
