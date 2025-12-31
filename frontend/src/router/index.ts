@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
 import BookingView from '../views/BookingView.vue'
+import { useToast } from "vue-toastification"
 
 import { useAuthStore } from '../stores/auth'
 
@@ -29,6 +30,7 @@ const router = createRouter({
 // Global Auth Guard
 router.beforeEach((to, from, next) => {
   const authStore = useAuthStore()
+  const toast = useToast()
   // Check session
   authStore.checkSession()
   
@@ -41,7 +43,7 @@ router.beforeEach((to, from, next) => {
     }
     // Check role
     if (authStore.user.role !== 'ADMIN') {
-      alert("Access Denied: Admins only")
+      toast.error("Access Denied: Admins only")
       next('/') // Wrong role -> Home
       return
     }

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useToast } from "vue-toastification"
 
 export const useAuthStore = defineStore('auth', () => {
   interface User {
@@ -13,6 +14,7 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const token = ref<string | null>(null)
   const showLoginModal = ref(false)
+  const toast = useToast()
 
   // Check session validity (1 hour default)
   const SESSION_DURATION = 60 * 60 *1000
@@ -52,6 +54,7 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('auth_expiry', expiryTime.toString())
     
     showLoginModal.value = false
+    toast.success(`Welcome back, ${userData.name}!`)
   }
 
   const logout = () => {
@@ -60,6 +63,7 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('user')
     localStorage.removeItem('token')
     localStorage.removeItem('auth_expiry')
+    toast.info("Logged out successfully")
   }
 
   const openLoginModal = () => showLoginModal.value = true

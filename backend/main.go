@@ -15,7 +15,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func main() {
@@ -26,10 +26,10 @@ func main() {
 	database.ConnectDB()
 
 	// Init Services
-	services.InitQueueService() // Connect Kafka
+	services.InitQueueService()   // Connect Kafka
 	services.StartQueueConsumer() // Listen event from kafka
-	services.InitWSHub() // Init WebSocket Hub
-	services.InitAuditService() // Init Audit log Service
+	services.InitWSHub()          // Init WebSocket Hub
+	services.InitAuditService()   // Init Audit log Service
 
 	// Start Redis Expiration Listener
 	lockService := services.NewLockService()
@@ -235,14 +235,6 @@ func SeedData() {
 	}
 
 	for _, m := range mockMovies {
-		var existingMovie models.Movie
-		err := moviesColl.FindOne(context.TODO(), bson.M{"title": m.Title}).Decode(&existingMovie)
-		if err == nil {
-			continue // Already exists
-		}
-
-		log.Printf("Seeding %s...", m.Title)
-
 		var screenings []models.Screening
 		for _, st := range m.ScreeningTimes {
 			// Create Seats
@@ -269,7 +261,6 @@ func SeedData() {
 		}
 
 		newMovie := models.Movie{
-			ID:          primitive.NewObjectID(),
 			Title:       m.Title,
 			Description: m.Description,
 			Genre:       m.Genre,
@@ -277,7 +268,25 @@ func SeedData() {
 			PosterURL:   m.PosterURL,
 			Screenings:  screenings,
 		}
-		moviesColl.InsertOne(context.TODO(), newMovie)
+
+		// Use Upsert to either Insert or Update existing by title
+		filter := bson.M{"title": m.Title}
+		update := bson.M{
+			"$set": bson.M{
+				"description":  newMovie.Description,
+				"genre":        newMovie.Genre,
+				"duration_min": newMovie.DurationMin,
+				"poster_url":   newMovie.PosterURL,
+				"screenings":   newMovie.Screenings,
+			},
+		}
+
+		_, err := moviesColl.UpdateOne(context.TODO(), filter, update, options.Update().SetUpsert(true))
+		if err != nil {
+			log.Printf("Failed to seed %s: %v", m.Title, err)
+		} else {
+			log.Printf("Seeded/Updated %s (Price: 200)", m.Title)
+		}
 	}
 	log.Println("All Mock Data Seeded!")
 }

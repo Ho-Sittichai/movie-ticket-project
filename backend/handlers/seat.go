@@ -146,6 +146,19 @@ func BookSeat(c *gin.Context) {
 	bookedCount := 0
 	var successfulBookings []models.Booking // Collect bookings for group email
 
+	// 1. Fetch the screening price from the database
+	movieObjID, _ := primitive.ObjectIDFromHex(req.MovieID)
+	var movie models.Movie
+	collection.FindOne(context.TODO(), bson.M{"_id": movieObjID}).Decode(&movie)
+
+	var screeningPrice float64 = 200 // Fallback
+	for _, s := range movie.Screenings {
+		if s.ID == screeningID {
+			screeningPrice = s.Price
+			break
+		}
+	}
+
 	for _, seatID := range req.SeatIDs {
 		// 1. Check Lock
 		locked, holder := lockService.IsSeatLocked(screeningID, seatID)
@@ -199,8 +212,8 @@ func BookSeat(c *gin.Context) {
 			ScreenStartTime: req.StartTime,
 			SeatID:          seatID,
 			Status:          "SUCCESS",
-			PaymentID:       req.PaymentID, // [NEW] Save Payment Reference
-			Amount:          120,           // Should fetch price from screening
+			PaymentID:       req.PaymentID,  // [NEW] Save Payment Reference
+			Amount:          screeningPrice, // Dynamic price from DB
 			CreatedAt:       time.Now(),
 		}
 		bookingCollection.InsertOne(context.TODO(), booking)

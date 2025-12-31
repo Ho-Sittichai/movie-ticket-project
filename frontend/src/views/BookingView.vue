@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
+import { useToast } from "vue-toastification";
 import api, { paymentApi, seatApi } from "../services/api";
 import { useAuthStore } from "../stores/auth";
 import PaymentModal from "../components/Modal/PaymentModal.vue";
@@ -8,8 +9,29 @@ import PaymentModal from "../components/Modal/PaymentModal.vue";
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const toast = useToast();
 
 const isPaymentModalOpen = ref(false);
+
+// Tooltip State for Seats
+const hoveredSeat = ref<any>(null);
+const tooltipStyle = ref({
+  top: "0px",
+  left: "0px",
+});
+
+const handleSeatHover = (seat: any, event: MouseEvent) => {
+  hoveredSeat.value = seat;
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  tooltipStyle.value = {
+    top: `${rect.top - 8}px`, // Slightly above the seat
+    left: `${rect.left + rect.width / 2}px`,
+  };
+};
+
+const handleSeatLeave = () => {
+  hoveredSeat.value = null;
+};
 
 const loading = ref(true);
 const movie = ref<any>({
@@ -99,7 +121,7 @@ const fetchScreening = async () => {
     console.error("Failed to fetch screening:", error);
     // Keep skeleton/seats visible for a moment, then show error
     setTimeout(() => {
-      alert("Failed to load screening data. Please try again.");
+      toast.error("Failed to load screening data. Please try again.");
       router.push("/");
     }, 1000);
   } finally {
@@ -161,15 +183,15 @@ const toggleSeat = async (seat: any) => {
       }
     } else {
       seat.status = originalStatus; // Revert
-      alert("Failed to update seat");
+      toast.error("Failed to update seat");
     }
   } catch (e: any) {
     console.error("Lock error", e);
     seat.status = "AVAILABLE"; // Simplify revert
     if (e.response && e.response.status === 409) {
-      alert(e.response.data.error);
+      toast.warning(e.response.data.error);
     } else {
-      alert("Error updating seat");
+      toast.error("Error updating seat");
     }
   }
 };
@@ -247,7 +269,7 @@ const confirmBooking = async () => {
     );
 
     if (res.status === 200) {
-      alert("Booking Success!");
+      toast.success("Booking Success!");
       // Loop to update local status if needed (though API/WS should handle it)
       selectedSeats.value.forEach((s) => (s.status = "BOOKED"));
       isPaymentModalOpen.value = false;
@@ -255,7 +277,9 @@ const confirmBooking = async () => {
     }
   } catch (e: any) {
     console.error("Booking failed", e);
-    alert("Booking Failed: " + (e.response?.data?.error || "Unknown Error"));
+    toast.error(
+      "Booking Failed: " + (e.response?.data?.error || "Unknown Error")
+    );
   } finally {
     isBooking.value = false; // Stop loading
   }
@@ -290,7 +314,7 @@ const handleBookTicket = async () => {
     isPaymentModalOpen.value = true;
   } catch (e: any) {
     console.error("Failed to extend lock", e);
-    alert(e.response?.data?.error);
+    toast.warning(e.response?.data?.error || "Failed to start payment process");
     // Maybe refresh?
     fetchScreening();
   } finally {
@@ -421,6 +445,8 @@ onUnmounted(() => {
               seat.status === 'LOCKED' ||
               seat.status === 'LOADING'
             "
+            @mouseenter="handleSeatHover(seat, $event)"
+            @mouseleave="handleSeatLeave"
           >
             <span v-if="seat.status !== 'LOADING'">{{ seat.number }}</span>
             <span v-else class="w-2 h-2 rounded-full bg-white/20"></span>
@@ -509,6 +535,33 @@ onUnmounted(() => {
       @confirm="confirmBooking"
     />
   </div>
+
+  <!-- Global Teleport Tooltip -->
+  <Teleport to="body">
+    <div
+      v-if="hoveredSeat"
+      class="fixed z-[9999] pointer-events-none -translate-x-1/2 -translate-y-full"
+      :style="tooltipStyle"
+    >
+      <div
+        class="mb-2 px-3 py-2 bg-slate-900 border border-white/10 rounded-xl shadow-2xl whitespace-nowrap animate-in fade-in zoom-in duration-200"
+      >
+        <div
+          class="text-[10px] font-bold text-indigo-400 uppercase tracking-wider mb-0.5"
+        >
+          Seat {{ hoveredSeat.id }}
+        </div>
+        <div class="text-sm font-bold text-white">
+          {{ movie.price }}
+          <span class="text-[10px] text-gray-400">THB</span>
+        </div>
+        <!-- Arrow -->
+        <div
+          class="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-slate-900"
+        ></div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
