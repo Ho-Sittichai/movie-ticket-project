@@ -53,7 +53,6 @@ onUnmounted(() => {
         <!-- Auth State -->
         <div v-if="authStore.user" class="relative profile-dropdown">
            <!-- Profile Button -->
-           <!-- Profile Button -->
            <button 
              @click.stop="toggleProfile"
              class="flex items-center justify-between gap-3 pl-1 pr-3 sm:pr-4 py-1.5 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition-all group min-w-[120px] max-w-[160px] sm:max-w-none sm:w-[220px]"

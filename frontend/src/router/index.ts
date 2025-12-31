@@ -28,7 +28,7 @@ const router = createRouter({
 })
 
 // Global Auth Guard
-router.beforeEach((to, from, next) => {
+router.beforeEach((to, _from, next) => {
   const authStore = useAuthStore()
   const toast = useToast()
   // Check session

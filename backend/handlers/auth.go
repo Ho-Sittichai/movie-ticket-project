@@ -94,13 +94,19 @@ func GoogleCallback(c *gin.Context) {
 	err = collection.FindOne(context.TODO(), bson.M{"email": googleUser.Email}).Decode(&user)
 
 	if err != nil {
-		// New User
+		// New User logic: Check if first user
+		count, _ := collection.CountDocuments(context.TODO(), bson.M{})
+		role := models.RoleUser
+		if count == 0 {
+			role = models.RoleAdmin // First user gets ADMIN
+		}
+
 		user = models.User{
 			ID:         primitive.NewObjectID(),
 			Email:      googleUser.Email,
 			Name:       googleUser.Name,
 			PictureURL: googleUser.Picture,
-			Role:       models.RoleUser,
+			Role:       role,
 			CreatedAt:  time.Now(),
 			UpdatedAt:  time.Now(),
 		}

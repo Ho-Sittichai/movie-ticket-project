@@ -42,28 +42,7 @@ func GetAllBookings(c *gin.Context) {
 	}
 	skip := (page - 1) * limit
 
-	// 1. Build Filter
-	// filter := bson.M{} (Unused, using manual filtering for now)
-
-	// Pre-fetch related data for filtering ID-based fields effectively would require aggregation
-	// or complex logic. To keep it simple and safe as per plan:
-	// We will fetch ALL matching the basic ID filters first if possible,
-	// OR we stick to the post-filtering approach but optimization is tricky without aggregation.
-	// Given the "Lag" complaint, let's try to filter at DB level where possible.
-
-	// However, MovieID and User search are tricky because Bookings only have IDs.
-	// If we want TRUE server-side pagination with filtering, we need to:
-	// A) Filter by Date (easy, if strictly DB field) - createdAt is time.Time,
-	//    User probably wants "Screening Date". Screening info is in another collection.
-	// B) Filter by Movie/User - requires Lookups.
-
-	// OPTIMIZATION STRATEGY:
-	// For now, to solve "Lag" which is likely rendering 100s of items:
-	// We will fetch all (as before), filter in memory (as before),
-	// AND THEN paginate the RESULT slice before sending.
-	// This solves Network and Frontend Rendering lag, though not DB load (which is usually fine for <10k records).
-
-	// ... (Existing logic to fetch all) ...
+	// ... (fetch all) ...
 
 	bookingsColl := database.Mongo.Collection("bookings")
 	cursor, err := bookingsColl.Find(context.TODO(), bson.M{})
@@ -200,13 +179,4 @@ func GetAllBookings(c *gin.Context) {
 			"pages": (total + limit - 1) / limit,
 		},
 	})
-}
-
-func GetAdminStats(c *gin.Context) {
-	// Simple helper for cards
-	// Reuse logic or create specialized aggregation later
-	// For now, let Frontend calculate from /bookings response or separate specific calls if needed.
-	// We will just return empty for now as task didn't explicitly ask for separate stats API,
-	// but the dashboard usually needs them.
-	// Let's stick to returning data in GetAllBookings and let frontend count.
 }

@@ -38,19 +38,6 @@ func LoadConfig() {
 		log.Fatalf("Unable to decode config, %v", err)
 	}
 
-	// Manual fallback check
-	// if AppConfig.DBURI == "" {
-	// 	AppConfig.DBURI = os.Getenv("DB_URI")
-	// }
-	// if AppConfig.DBName == "" {
-	// 	AppConfig.DBName = os.Getenv("DB_NAME")
-	// }
-	// if AppConfig.RedisAddr == "" {
-	// 	AppConfig.RedisAddr = os.Getenv("REDIS_ADDR")
-	// }
-	// if AppConfig.KafkaBrokers == "" {
-	// 	AppConfig.KafkaBrokers = os.Getenv("KAFKA_BROKERS")
-	// }
 	if AppConfig.GoogleClientID == "" {
 		AppConfig.GoogleClientID = os.Getenv("GOOGLE_CLIENT_ID")
 	}
