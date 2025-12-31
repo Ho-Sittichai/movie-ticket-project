@@ -73,16 +73,22 @@ const dateInputRef = ref<HTMLInputElement | null>(null);
 
 const isToday = computed(() => {
   if (!filters.value.date) return false;
-  const today = new Date().toISOString().split("T")[0];
-  return filters.value.date === today;
+  const now = new Date();
+  const localToday = `${now.getFullYear()}-${String(
+    now.getMonth() + 1
+  ).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return filters.value.date === localToday;
 });
 
 const toggleToday = () => {
-  const today = new Date().toISOString().split("T")[0] || "";
-  if (filters.value.date === today) {
+  const now = new Date();
+  const localToday = `${now.getFullYear()}-${String(
+    now.getMonth() + 1
+  ).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  if (filters.value.date === localToday) {
     filters.value.date = "";
   } else {
-    filters.value.date = today;
+    filters.value.date = localToday;
   }
   resetAndFetch();
 };
@@ -195,17 +201,7 @@ const doughnutChartOptions = {
 
 // --- Methods ---
 const fetchData = async () => {
-  await Promise.all([fetchMovies(), fetchBookings()]);
-};
-
-const fetchMovies = async () => {
-  try {
-    const res = await fetch("http://localhost:8080/api/movies");
-    const data = await res.json();
-    movies.value = data;
-  } catch (err) {
-    console.error("Failed to load movies", err);
-  }
+  await Promise.all([fetchBookings()]);
 };
 
 const fetchBookings = async () => {
@@ -585,15 +581,14 @@ onMounted(() => {
                   <th class="px-6 py-4">Booking Details</th>
                   <th class="px-6 py-4">Customer</th>
                   <th class="px-6 py-4 text-center">Seat</th>
-                  <th class="px-6 py-4 text-center">Showtime</th>
                   <th class="px-6 py-4 text-center">Status</th>
                   <th class="px-6 py-4 text-right">Amount</th>
-                  <th class="px-6 py-4 text-right">Trans. Date</th>
+                  <th class="px-6 py-4 text-right">Transaction Time</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-700/30">
                 <tr v-if="loading" class="bg-slate-900/20 animate-pulse">
-                  <td colspan="7" class="px-6 py-12 text-center text-slate-500">
+                  <td colspan="6" class="px-6 py-12 text-center text-slate-500">
                     <i
                       class="fas fa-circle-notch fa-spin mr-2 text-indigo-500"
                     ></i>
@@ -601,7 +596,7 @@ onMounted(() => {
                   </td>
                 </tr>
                 <tr v-else-if="bookings.length === 0">
-                  <td colspan="7" class="px-6 py-16 text-center text-slate-500">
+                  <td colspan="6" class="px-6 py-16 text-center text-slate-500">
                     <span class="font-medium">No bookings found</span>
                   </td>
                 </tr>
@@ -652,14 +647,6 @@ onMounted(() => {
                     >
                   </td>
                   <td class="px-6 py-4 text-center">
-                    <div class="text-sm text-indigo-100 font-medium">
-                      {{ formatTime(b.created_at) }}
-                    </div>
-                    <div class="text-[10px] text-slate-500">
-                      {{ formatDate(b.created_at) }}
-                    </div>
-                  </td>
-                  <td class="px-6 py-4 text-center">
                     <span
                       class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border shadow-sm"
                       :class="{
@@ -683,16 +670,16 @@ onMounted(() => {
                     </span>
                   </td>
                   <td class="px-6 py-4 text-right">
-                    <span class="font-bold text-slate-200"
+                    <span class="text-sm font-semibold text-white"
                       >${{ b.amount.toFixed(2) }}</span
                     >
                   </td>
                   <td class="px-6 py-4 text-right">
-                    <div class="text-[11px] text-slate-300">
-                      {{ formatDate(b.created_at) }}
+                    <div class="text-sm text-indigo-100 font-medium">
+                      {{ formatTime(b.created_at) }}
                     </div>
                     <div class="text-[10px] text-slate-500">
-                      {{ formatTime(b.created_at) }}
+                      {{ formatDate(b.created_at) }}
                     </div>
                   </td>
                 </tr>

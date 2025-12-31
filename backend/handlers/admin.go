@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"movie-ticket-backend/database"
 	"movie-ticket-backend/models"
 	"strconv"
@@ -104,9 +105,13 @@ func GetAllBookings(c *gin.Context) {
 			}
 		}
 
-		// Filter: Date (Screening Date)
+		// Filter: Date (Transaction Date)
 		if filterDate != "" {
-			if !okSc || scInfo.StartTime.Format("2006-01-02") != filterDate {
+			bangkok := time.FixedZone("UTC+7", 7*60*60)
+			y, m, d := b.CreatedAt.In(bangkok).Date()
+			// Manually format to YYYY-MM-DD for clarity
+			dateStr := fmt.Sprintf("%04d-%02d-%02d", y, int(m), d)
+			if dateStr != filterDate {
 				continue
 			}
 		}
@@ -124,16 +129,15 @@ func GetAllBookings(c *gin.Context) {
 		}
 
 		item := AdminBookingResponse{
-			ID:            b.ID.Hex(),
-			UserEmail:     "Unknown",
-			UserName:      "Unknown",
-			MovieTitle:    "Unknown Movie",
-			PosterURL:     "",
-			ScreeningTime: time.Time{},
-			SeatID:        b.SeatID,
-			Status:        b.Status,
-			Amount:        b.Amount,
-			CreatedAt:     b.CreatedAt,
+			ID:         b.ID.Hex(),
+			UserEmail:  "Unknown",
+			UserName:   "Unknown",
+			MovieTitle: "Unknown Movie",
+			PosterURL:  "",
+			SeatID:     b.SeatID,
+			Status:     b.Status,
+			Amount:     b.Amount,
+			CreatedAt:  b.CreatedAt,
 		}
 
 		if okUser {
@@ -143,7 +147,7 @@ func GetAllBookings(c *gin.Context) {
 		if okSc {
 			item.MovieTitle = scInfo.MovieTitle
 			item.PosterURL = scInfo.Poster
-			item.ScreeningTime = scInfo.StartTime
+			item.ScreeningTime = scInfo.StartTime // Ensure this is set
 		}
 		filtered = append(filtered, item)
 	}
