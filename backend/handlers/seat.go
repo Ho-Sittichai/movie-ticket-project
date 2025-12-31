@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // --- Seat Handlers ---
@@ -53,12 +52,12 @@ func LockSeat(c *gin.Context) {
 	}
 
 	// Check if already locked
-	isLocked, holderID := lockService.IsSeatLocked(screeningID, req.SeatID)
+	isLocked, holderID := lockService.IsSeatLocked(req.MovieID, req.StartTime, req.SeatID)
 
 	if isLocked {
 		if holderID == userID {
 			// Same user -> Unlock (Toggle)
-			err := lockService.UnlockSeat(screeningID, req.SeatID)
+			err := lockService.UnlockSeat(req.MovieID, req.StartTime, req.SeatID)
 			if err != nil {
 				c.JSON(500, gin.H{"error": "Failed to unlock"})
 				return
@@ -67,6 +66,8 @@ func LockSeat(c *gin.Context) {
 			// WS Broadcast UNLOCK
 			services.WSHub.Broadcast <- services.SeatUpdateMessage{
 				ScreeningID: screeningID, // Internal ID used for WS room/topic
+				MovieID:     req.MovieID,
+				StartTime:   req.StartTime,
 				SeatID:      req.SeatID,
 				Status:      "AVAILABLE",
 			}
@@ -90,7 +91,7 @@ func LockSeat(c *gin.Context) {
 	}
 
 	// Not locked -> Lock it
-	locked, err := lockService.LockSeat(screeningID, req.SeatID, userID, 5*time.Minute)
+	locked, err := lockService.LockSeat(req.MovieID, req.StartTime, req.SeatID, userID, 5*time.Minute)
 	if err != nil {
 		services.LogError("SYSTEM_ERROR", userID, err, map[string]interface{}{"context": "redis_lock_seat"})
 		c.JSON(500, gin.H{"error": "Redis error"})
@@ -104,7 +105,9 @@ func LockSeat(c *gin.Context) {
 
 	// WS Broadcast LOCK
 	services.WSHub.Broadcast <- services.SeatUpdateMessage{
-		ScreeningID: screeningID,
+		ScreeningID: screeningID, // Internal ID used for WS room/topic
+		MovieID:     req.MovieID,
+		StartTime:   req.StartTime,
 		SeatID:      req.SeatID,
 		UserID:      userID,
 		Status:      "LOCKED",
@@ -139,121 +142,22 @@ func BookSeat(c *gin.Context) {
 		return
 	}
 
-	lockService := services.NewLockService()
-	collection := database.Mongo.Collection("movies")
-	bookingCollection := database.Mongo.Collection("bookings")
+	// Delegate to BookingService
+	bookingService := services.NewBookingService()
+	result, err := bookingService.ProcessBooking(userID, req.MovieID, screeningID, req.StartTime, req.SeatIDs, req.PaymentID)
 
-	bookedCount := 0
-	var successfulBookings []models.Booking // Collect bookings for group email
-
-	// 1. Fetch the screening price from the database
-	movieObjID, _ := primitive.ObjectIDFromHex(req.MovieID)
-	var movie models.Movie
-	collection.FindOne(context.TODO(), bson.M{"_id": movieObjID}).Decode(&movie)
-
-	var screeningPrice float64 = 200 // Fallback
-	for _, s := range movie.Screenings {
-		if s.ID == screeningID {
-			screeningPrice = s.Price
-			break
+	if err != nil {
+		// Differentiate error types if needed, for now general 500 or 409
+		// If "failed to book any seats" likely conflict
+		if err.Error() == "failed to book any seats" {
+			c.JSON(409, gin.H{"error": "Failed to book seats (already booked or lock missing)"})
+		} else {
+			c.JSON(500, gin.H{"error": err.Error()})
 		}
-	}
-
-	for _, seatID := range req.SeatIDs {
-		// 1. Check Lock
-		locked, holder := lockService.IsSeatLocked(screeningID, seatID)
-		if !locked || holder != userID {
-			fmt.Printf("Seat %s lock invalid for user %s\n", seatID, userID)
-			continue // Skip this seat or abort? Skip for partial success preferrable here
-		}
-
-		// 2. Update Mongo (Set Status BOOKED)
-		filter := bson.M{
-			"screenings": bson.M{
-				"$elemMatch": bson.M{
-					"id":           screeningID,
-					"seats.id":     seatID,
-					"seats.status": "AVAILABLE", // Concurrency check
-				},
-			},
-		}
-
-		update := bson.M{
-			"$set": bson.M{
-				"screenings.$[scr].seats.$[seat].status": "BOOKED",
-			},
-		}
-
-		arrayFilters := options.UpdateOptions{
-			ArrayFilters: &options.ArrayFilters{
-				Filters: []interface{}{
-					bson.M{"scr.id": screeningID},
-					bson.M{"seat.id": seatID},
-				},
-			},
-		}
-
-		res, err := collection.UpdateOne(context.TODO(), filter, update, &arrayFilters)
-		if err != nil {
-			fmt.Printf("Mongo Update Error for %s: %v\n", seatID, err)
-			continue
-		}
-		if res.ModifiedCount == 0 {
-			// This might happen if DB status turned BOOKED already
-			fmt.Printf("Seat %s update failed (modified 0)\n", seatID)
-			continue
-		}
-
-		// 3. Create Booking Record
-		booking := models.Booking{
-			ID:              primitive.NewObjectID(),
-			UserID:          userID,
-			ScreeningID:     screeningID,
-			ScreenStartTime: req.StartTime,
-			SeatID:          seatID,
-			Status:          "SUCCESS",
-			PaymentID:       req.PaymentID,  // [NEW] Save Payment Reference
-			Amount:          screeningPrice, // Dynamic price from DB
-			CreatedAt:       time.Now(),
-		}
-		bookingCollection.InsertOne(context.TODO(), booking)
-
-		bookedCount++
-		successfulBookings = append(successfulBookings, booking)
-
-		// 4. Unlock Redis
-		lockService.UnlockSeat(screeningID, seatID)
-
-		// 5. Update WS (Still update seat status individually for real-time UI)
-		services.WSHub.Broadcast <- services.SeatUpdateMessage{
-			ScreeningID: screeningID,
-			SeatID:      seatID,
-			Status:      "BOOKED",
-		}
-	}
-
-	if bookedCount == 0 {
-		c.JSON(409, gin.H{"error": "Failed to book any seats (locks expired?)"})
 		return
 	}
 
-	// [NEW] Group Email Event
-	services.GetQueueService().PublishEvent("BOOKING_GROUP_SUCCESS", successfulBookings)
-
-	// [AUDIT LOG] Booking Success
-	services.LogInfo("BOOKING_SUCCESS", userID, map[string]interface{}{
-		"movie_id":          req.MovieID,
-		"screen_id":         screeningID,
-		"screen_start_time": req.StartTime,
-		"seat_ids":          req.SeatIDs,
-		"booked_count":      bookedCount,
-		"payment_id":        req.PaymentID, // [NEW] Log payment ID
-	})
-
-	// Release Payment Lock
-	lockService.ReleasePaymentLock(userID)
-
-	c.JSON(200, gin.H{"message": "Booking Success", "booked_count": bookedCount})
+	c.JSON(200, gin.H{"message": "Booking Success", "booked_count": result.BookedCount})
 }
 
 // ExtendSeatLock Handler for batch extension
@@ -275,17 +179,13 @@ func ExtendSeatLock(c *gin.Context) {
 		return
 	}
 
-	screeningID, err := resolveScreeningID(req.MovieID, req.StartTime)
-	if err != nil {
-		c.JSON(404, gin.H{"error": err.Error()})
-		return
-	}
+	// screeningID resolution removed as it is not needed for ExtendSeatLock with new key format
 
 	lockService := services.NewLockService()
 	extendedCount := 0
 
 	for _, seatID := range req.SeatIDs {
-		success, err := lockService.ExtendSeatLock(screeningID, seatID, userID, 5*time.Minute)
+		success, err := lockService.ExtendSeatLock(req.MovieID, req.StartTime, seatID, userID, 5*time.Minute)
 		if err != nil {
 			fmt.Printf("Error extending lock for seat %s: %v\n", seatID, err)
 			continue

@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"movie-ticket-backend/database"
+	"movie-ticket-backend/models"
 	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type LockService struct {
@@ -21,30 +24,30 @@ func NewLockService() *LockService {
 	}
 }
 
-// LockSeat พยายาม Lock ที่นั่ง
-func (s *LockService) LockSeat(screeningID, seatID, userID string, duration time.Duration) (bool, error) {
+// LockSeat uses MovieID + StartTime + SeatID for unique locking
+func (s *LockService) LockSeat(movieID, startTime, seatID, userID string, duration time.Duration) (bool, error) {
 	ctx := context.Background()
-	key := fmt.Sprintf("seat_lock:screening:%s:seat:%s", screeningID, seatID)
+	key := fmt.Sprintf("seat_lock:movie:%s:time:%s:seat:%s", movieID, startTime, seatID)
 
-	// Value คือ UserID เพื่อบอกว่าใคร Lock
-	success, err := s.RDB.SetNX(ctx, key, userID, duration).Result() // SetNX for Set if Not Exists
+	// Value is UserID to indicate who holds the lock
+	success, err := s.RDB.SetNX(ctx, key, userID, duration).Result()
 	if err != nil {
 		return false, err
 	}
-	return success, nil // true = locked success
+	return success, nil
 }
 
-// UnlockSeat ปลด Lock
-func (s *LockService) UnlockSeat(screeningID, seatID string) error {
+// UnlockSeat uses MovieID + StartTime + SeatID
+func (s *LockService) UnlockSeat(movieID, startTime, seatID string) error {
 	ctx := context.Background()
-	key := fmt.Sprintf("seat_lock:screening:%s:seat:%s", screeningID, seatID)
+	key := fmt.Sprintf("seat_lock:movie:%s:time:%s:seat:%s", movieID, startTime, seatID)
 	return s.RDB.Del(ctx, key).Err()
 }
 
-// ExtendSeatLock ต่อเวลา
-func (s *LockService) ExtendSeatLock(screeningID, seatID, userID string, duration time.Duration) (bool, error) {
+// ExtendSeatLock uses MovieID + StartTime + SeatID
+func (s *LockService) ExtendSeatLock(movieID, startTime, seatID, userID string, duration time.Duration) (bool, error) {
 	ctx := context.Background()
-	key := fmt.Sprintf("seat_lock:screening:%s:seat:%s", screeningID, seatID)
+	key := fmt.Sprintf("seat_lock:movie:%s:time:%s:seat:%s", movieID, startTime, seatID)
 
 	// Check ownership first
 	val, err := s.RDB.Get(ctx, key).Result()
@@ -62,10 +65,10 @@ func (s *LockService) ExtendSeatLock(screeningID, seatID, userID string, duratio
 	return s.RDB.Expire(ctx, key, duration).Result()
 }
 
-// IsSeatLocked เช็คสถานะ
-func (s *LockService) IsSeatLocked(screeningID, seatID string) (bool, string) {
+// IsSeatLocked uses MovieID + StartTime + SeatID
+func (s *LockService) IsSeatLocked(movieID, startTime, seatID string) (bool, string) {
 	ctx := context.Background()
-	key := fmt.Sprintf("seat_lock:screening:%s:seat:%s", screeningID, seatID)
+	key := fmt.Sprintf("seat_lock:movie:%s:time:%s:seat:%s", movieID, startTime, seatID)
 
 	val, err := s.RDB.Get(ctx, key).Result()
 	if err == redis.Nil {
@@ -97,13 +100,11 @@ func (s *LockService) SetPaymentLock(userID string, details PaymentLockDetails, 
 		return err
 	}
 
-	// 1. Set the expiring lock
 	err = s.RDB.Set(ctx, key, val, duration).Err()
 	if err != nil {
 		return err
 	}
 
-	// 2. Set the persistent data (longer TTL 10m to be safe) for the listener
 	return s.RDB.Set(ctx, dataKey, val, duration+5*time.Minute).Err()
 }
 
@@ -112,7 +113,6 @@ func (s *LockService) ReleasePaymentLock(userID string) error {
 	key := fmt.Sprintf("payment_lock:%s", userID)
 	dataKey := fmt.Sprintf("payment_data:%s", userID)
 
-	// Delete both
 	s.RDB.Del(ctx, dataKey)
 	return s.RDB.Del(ctx, key).Err()
 }
@@ -129,7 +129,7 @@ func (s *LockService) GetPaymentLock(userID string) (*PaymentLockDetails, error)
 	key := fmt.Sprintf("payment_lock:%s", userID)
 	val, err := s.RDB.Get(ctx, key).Result()
 	if err == redis.Nil {
-		return nil, nil // No lock
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
@@ -142,9 +142,10 @@ func (s *LockService) GetPaymentLock(userID string) (*PaymentLockDetails, error)
 	return &details, nil
 }
 
-func (s *LockService) GetLockedSeats(screeningID string) (map[string]string, error) {
+// GetLockedSeats matches pattern for specific movie & time
+func (s *LockService) GetLockedSeats(movieID, startTime string) (map[string]string, error) {
 	ctx := context.Background()
-	pattern := fmt.Sprintf("seat_lock:screening:%s:seat:*", screeningID)
+	pattern := fmt.Sprintf("seat_lock:movie:%s:time:%s:seat:*", movieID, startTime)
 
 	keys, err := s.RDB.Keys(ctx, pattern).Result()
 	if err != nil {
@@ -156,23 +157,17 @@ func (s *LockService) GetLockedSeats(screeningID string) (map[string]string, err
 		return lockedSeats, nil
 	}
 
-	// Fetch all values (UserIDs) associated with these keys
 	values, err := s.RDB.MGet(ctx, keys...).Result()
 	if err != nil {
 		return nil, err
 	}
 
 	for i, key := range keys {
-		// Key format: seat_lock:screening:<ScreeningID>:seat:<SeatID>
-		// We know keys matched the pattern, so we can parse carefully or just split
-		// Pattern: seat_lock:screening:%s:seat:*
-
-		// Robust parsing:
-		var prefix = fmt.Sprintf("seat_lock:screening:%s:seat:", screeningID)
-		if len(key) > len(prefix) {
-			seatID := key[len(prefix):]
-
-			// value is interface{}, cast to string
+		// key: seat_lock:movie:<ID>:time:<Time>:seat:<SeatID>
+		// Robust parsing tailored to this specific format
+		prefix := fmt.Sprintf("seat_lock:movie:%s:time:%s:seat:", movieID, startTime)
+		if strings.HasPrefix(key, prefix) {
+			seatID := strings.TrimPrefix(key, prefix)
 			if val, ok := values[i].(string); ok {
 				lockedSeats[seatID] = val
 			}
@@ -182,7 +177,7 @@ func (s *LockService) GetLockedSeats(screeningID string) (map[string]string, err
 	return lockedSeats, nil
 }
 
-// ListenForExpireRedis คอยฟัง Event ตอน Key หมดอายุ
+// ListenForExpireRedis Listens for key expiration
 func (s *LockService) ListenForExpireRedis() {
 	ctx := context.Background()
 	pubsub := s.RDB.Subscribe(ctx, "__keyevent@0__:expired")
@@ -192,51 +187,64 @@ func (s *LockService) ListenForExpireRedis() {
 	ch := pubsub.Channel()
 	for msg := range ch {
 		key := msg.Payload
-		// Format: seat_lock:screening:SCR_ID:seat:SEAT_ID
-		var scrID, seatID string
-		_, _ = fmt.Sscanf(key, "seat_lock:screening:%s:seat:%s", &scrID, &seatID)
 
-		// Note: Sscanf might fail with %s if no separators.
-		// Manual parse for safety:
-		// seat_lock:screening:s1:seat:A1
-		var prefix = "seat_lock:screening:"
-		var midPart = ":seat:"
+		// Key: seat_lock:movie:%s:time:%s:seat:%s
+		if strings.HasPrefix(key, "seat_lock:movie:") {
+			parts := strings.Split(key, ":")
+			// seat_lock:movie:<ID>:time:<Time>:seat:<SeatID> -> 7 parts
+			// 0: seat_lock, 1: movie, 2: <ID>, 3: time, 4: <Time>, 5: seat, 6: <SeatID>
+			if len(parts) >= 7 {
+				movieID := parts[2]
+				// Time might contain colons (e.g. 2024-12-31T20:00:00Z)
+				// So we take everything between 'time' and 'seat'
+				// Use substring logic for safer parsing with variable separators
+				// Pattern: seat_lock:movie:<MID>:time:<TIME>:seat:<SID>
+				// Find first "time:" and last ":seat:"
 
-		if len(key) > len(prefix) && contains(key, midPart) {
-			parts := split(key, ":")
-			if len(parts) >= 5 {
-				scrID = parts[2]
-				seatID = parts[4]
+				// Re-parsing strategy:
+				// 1. Remove prefix "seat_lock:movie:"
+				// 2. Find next ":time:"
+				// 3. Find last ":seat:"
 
-				fmt.Printf("Key Expired! Screening: %s, Seat: %s. Broadcasting unlock...\n", scrID, seatID)
+				remainder := strings.TrimPrefix(key, "seat_lock:movie:")
+				timeSplit := strings.Index(remainder, ":time:")
+				seatSplit := strings.LastIndex(remainder, ":seat:")
 
-				// [AUDIT LOG] Seat Auto Released (Expired)
-				// Note: movie_id and start_time are not in the Redis key,
-				// logging screening_id and seat_id as primary identifiers.
-				LogInfo("SEAT_RELEASED", "SYSTEM", map[string]interface{}{
-					"screen_id": scrID,
-					"seat_id":   seatID,
-					"reason":    "expired",
-				})
+				if timeSplit != -1 && seatSplit != -1 && seatSplit > timeSplit {
+					movieID = remainder[:timeSplit]
+					startTime := remainder[timeSplit+6 : seatSplit]
+					seatID := remainder[seatSplit+6:]
 
-				// WS Broadcast UNLOCK
-				WSHub.Broadcast <- SeatUpdateMessage{
-					ScreeningID: scrID,
-					SeatID:      seatID,
-					Status:      "AVAILABLE",
+					// Resolve ScreeningID for WS Broadcast
+					screeningID, err := s.getScreeningID(movieID, startTime)
+					if err != nil {
+						fmt.Printf("Failed to resolve screening ID for expired key %s: %v\n", key, err)
+						continue
+					}
+
+					fmt.Printf("Key Expired! Movie: %s, Seat: %s. Broadcasting unlock...\n", movieID, seatID)
+
+					LogInfo("SEAT_RELEASED", "SYSTEM", map[string]interface{}{
+						"movie_id":  movieID,
+						"seat_id":   seatID,
+						"reason":    "expired",
+						"screen_id": screeningID, // Log Internal ID too
+					})
+
+					WSHub.Broadcast <- SeatUpdateMessage{
+						ScreeningID: screeningID,
+						SeatID:      seatID,
+						Status:      "AVAILABLE",
+					}
 				}
 			}
 		} else if strings.HasPrefix(key, "payment_lock:") {
-			// Format: payment_lock:USER_ID
 			userID := strings.TrimPrefix(key, "payment_lock:")
 			dataKey := fmt.Sprintf("payment_data:%s", userID)
-
-			// Fetch details from shadow key
 			val, err := s.RDB.Get(ctx, dataKey).Result()
 			if err == nil {
 				var details PaymentLockDetails
 				if err := json.Unmarshal([]byte(val), &details); err == nil {
-					// [AUDIT LOG] Booking Timeout
 					fmt.Printf("Payment Lock Expired for User: %s. Logging timeout...\n", userID)
 					LogInfo("BOOKING_TIMEOUT", userID, map[string]interface{}{
 						"movie_id":          details.MovieID,
@@ -245,33 +253,38 @@ func (s *LockService) ListenForExpireRedis() {
 						"seat_ids":          details.SeatIDs,
 					})
 				}
-				// Cleanup shadow key
 				s.RDB.Del(ctx, dataKey)
 			}
 		}
 	}
 }
 
-// Simple helpers because we are in services package
-func contains(s, substr string) bool {
-	for i := 0; i < len(s)-len(substr)+1; i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+// Internal Helper to find Screening ID from MovieID + StartTime
+func (s *LockService) getScreeningID(movieIDHex, startTimeStr string) (string, error) {
+	movieObjID, err := primitive.ObjectIDFromHex(movieIDHex)
+	if err != nil {
+		return "", fmt.Errorf("invalid Movie ID")
 	}
-	return false
-}
 
-func split(s, sep string) []string {
-	var result []string
-	start := 0
-	for i := 0; i < len(s)-len(sep)+1; i++ {
-		if s[i:i+len(sep)] == sep {
-			result = append(result, s[start:i])
-			start = i + len(sep)
-			i = start - 1
+	// Try parsing standard time formats
+	reqTime, err := time.Parse(time.RFC3339, startTimeStr)
+	if err != nil {
+		// Try fallback if stored differently in key vs logic, but usually we stick to RFC3339
+		return "", fmt.Errorf("invalid Start Time")
+	}
+
+	collection := database.Mongo.Collection("movies")
+	var movie models.Movie
+	err = collection.FindOne(context.TODO(), bson.M{"_id": movieObjID}).Decode(&movie)
+	if err != nil {
+		return "", fmt.Errorf("movie not found")
+	}
+
+	for _, sc := range movie.Screenings {
+		// Compare time equality or string match
+		if sc.StartTime.Equal(reqTime) || sc.StartTime.Format(time.RFC3339) == startTimeStr {
+			return sc.ID, nil
 		}
 	}
-	result = append(result, s[start:])
-	return result
+	return "", fmt.Errorf("screening not found")
 }

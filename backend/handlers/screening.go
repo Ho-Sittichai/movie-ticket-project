@@ -67,7 +67,7 @@ func GetScreeningDetails(c *gin.Context) {
 
 	// Redis Lock check
 	lockService := services.NewLockService()
-	lockedSeatsMap, _ := lockService.GetLockedSeats(screening.ID)
+	lockedSeatsMap, _ := lockService.GetLockedSeats(req.MovieID, req.StartTime)
 
 	// Merge Status
 	seatsCopy := make([]models.Seat, len(screening.Seats))

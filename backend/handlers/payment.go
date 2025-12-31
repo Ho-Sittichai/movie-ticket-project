@@ -47,7 +47,7 @@ func StartPayment(c *gin.Context) {
 	// 3. Extend Seat Locks FIRST (Ensure validity)
 	extendedCount := 0
 	for _, seatID := range req.SeatIDs {
-		success, err := lockService.ExtendSeatLock(screeningID, seatID, userID, 5*time.Minute)
+		success, err := lockService.ExtendSeatLock(req.MovieID, req.StartTime, seatID, userID, 5*time.Minute)
 		if err != nil {
 			fmt.Printf("Error extending lock for seat %s: %v\n", seatID, err)
 			continue

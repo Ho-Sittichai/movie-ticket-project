@@ -18,6 +18,8 @@ var upgrader = websocket.Upgrader{
 
 type SeatUpdateMessage struct {
 	ScreeningID string `json:"screening_id"`
+	MovieID     string `json:"movie_id"`
+	StartTime   string `json:"start_time"`
 	SeatID      string `json:"seat_id"`
 	UserID      string `json:"user_id,omitempty"`
 	Status      string `json:"status"` // AVAILABLE, LOCKED, BOOKED

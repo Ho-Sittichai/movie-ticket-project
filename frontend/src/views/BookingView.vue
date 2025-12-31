@@ -207,9 +207,16 @@ const connectWS = () => {
   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data);
-      // Check if message belongs to current screening?
-      // In production, we should filter on Backend or here.
-      // For now, simple check: seat_id exists in our map
+
+      // Filter by Movie ID and Start Time
+      const currentMovieId = route.params.movieId;
+      const currentStartTime = route.query.time;
+      if (
+        msg.movie_id !== currentMovieId ||
+        msg.start_time !== currentStartTime
+      ) {
+        return; // Ignore messages for other screenings
+      }
 
       const targetSeat = seats.value.find((s) => s.id === msg.seat_id);
       if (targetSeat) {
@@ -257,7 +264,7 @@ const confirmBooking = async () => {
     isBooking.value = true; // Start loading
     const movieId = route.params.movieId as string;
     const startTime = route.query.time as string;
-    const seatIds = selectedSeats.value.map((s) => s.id);
+    const seatIds = selectedSeats.value.map((s: any) => s.id);
     const paymentId = `BILL-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
     const res = await seatApi.book(
@@ -271,7 +278,7 @@ const confirmBooking = async () => {
     if (res.status === 200) {
       toast.success("Booking Success!");
       // Loop to update local status if needed (though API/WS should handle it)
-      selectedSeats.value.forEach((s) => (s.status = "BOOKED"));
+      selectedSeats.value.forEach((s: any) => (s.status = "BOOKED"));
       isPaymentModalOpen.value = false;
       router.push("/");
     }
@@ -299,7 +306,7 @@ const handleBookTicket = async () => {
     isExtending.value = true;
     const movieId = route.params.movieId as string;
     const startTime = route.query.time as string;
-    const seatIds = selectedSeats.value.map((s) => s.id);
+    const seatIds = selectedSeats.value.map((s: any) => s.id);
 
     // Start Payment (Extends locks + Sets payment lock)
     const { data } = await paymentApi.start(

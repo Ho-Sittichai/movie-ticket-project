@@ -46,7 +46,7 @@ func (s *EmailService) SendGroupTicketEmail(user models.User, bookings []models.
 	body.WriteString("\r\n") // End of headers
 
 	body.WriteString("==================================================\n")
-	body.WriteString(fmt.Sprintf("             MOVIE TICKETS CONFIRMED          \n"))
+	body.WriteString("             MOVIE TICKETS CONFIRMED          \n")
 	body.WriteString("==================================================\n")
 	body.WriteString(fmt.Sprintf(" Hello %s,\n", user.Name))
 	body.WriteString("\n")
