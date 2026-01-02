@@ -101,6 +101,7 @@ graph TD
     ```bash
     git clone https://github.com/Ho-Sittichai/movie-ticket-project.git
     cd movie-ticket-project
+    add .env to backend folder and Add GOOGLE_REDIRECT_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET for google auth
     docker-compose up --build
     ```
 2.  **Access**:
