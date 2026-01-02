@@ -1,34 +1,28 @@
-# Movie Ticket Booking System 🎬🍿
+# Movie Ticket Booking System - ระบบจองตั๋วหนังแบบ Real-time 🎬🍿
+
+**Movie Ticket Booking System** คือโปรเจกต์ที่ให้ผู้ใช้งานสามารถซื้อตั๋วหนังได้แบบง่ายๆ โดยเน้นความถูกต้องของข้อมูล (Data Integrity) และประสิทธิภาพที่ต้องรองรับคนจำนวนมากได้แบบไม่ค้าง(Concurrency)
 
 ---
 
-## 🏗️ 1. System Architecture (สรุปภาพรวมระบบ)
+## 🏗️ 1. Architecture (ภาพรวมระบบ)
 
-เพื่อให้เข้าใจง่ายที่สุด ระบบเราทำงานเหมือน **"ร้านอาหาร"** ครับ:
+ระบบนี้ผมออกแบบมาให้เป็นแบบ **Decoupled Architecture** เพื่อแยกส่วนการทำงานให้ชัดเจนและรองรับการขยายตัว (Scalability) ในอนาคตครับ
 
 ```mermaid
-flowchart LR
-    A["👤 User<br>(ลูกค้า)"] -- "สั่งอาหาร/ดูเมนู" --> B["🌐 Frontend<br>(พนักงานรับออเดอร์)"]
-    B -- "ส่งคำสั่งไปในครัว" --> C["🚀 Backend Go<br>(เชฟเมนหลัก)"]
+graph TD
+    User((👤 Users)) -->|WebSocket/REST| FE[🌐 Vue.js Frontend]
+    FE -->|API Context| BE[🚀 Go Backend Services]
 
-    subgraph Storage ["คลังข้อมูล & สถานะที่นั่ง"]
-        C -- "จดบันทึกถาวร" --> D[("🍃 MongoDB")]
-        C -- "แปะป้ายจองที่นั่ง" --> E[("⚡ Redis")]
+    subgraph "Data & Consistency Layer"
+        BE -->|SETNX| Redis[(⚡ Redis: Distributed Lock)]
+        BE -->|Store| Mongo[(🍃 MongoDB: Persistent DB)]
     end
 
-    subgraph Background ["งานหลังร้าน (Async)"]
-        C -- "ฝากงานไว้ในท่อ" --> F{{"📦 Kafka"}}
-        F -- "หยิบงานไปทำ" --> G["📧 Email Service"]
+    subgraph "Event-Driven Background"
+        BE -->|Produce| Kafka{{"📦 Apache Kafka"}}
+        Kafka -->|Consume| Workers[📧 Notification/Audit Services]
     end
 ```
-
-### อธิบายง่ายๆ ว่าใครทำอะไร:
-
-1.  **Frontend (Vue.js)**: คือหน้าตาเว็บที่ลูกค้าเห็น มีหน้าที่รับคำสั่งจากลูกค้าว่าอยากดูเรื่องไหน จองที่ไหน แล้วส่งต่อให้หลังบ้าน
-2.  **Backend (Go)**: เป็นหัวใจหลัก เป็นคนตัดสินใจว่า "ที่นั่งนี้จองได้ไหม?" "จ่ายเงินผ่านหรือเปล่า?"
-3.  **Redis (The Lock)**: เหมือน **"สติกเกอร์แปะจอง"** จังหวะที่มีคนกดเลือกที่นั่ง เราจะรีบเอาสติกเกอร์ไปแปะไว้ใน Redis ก่อน ถ้ามีคนอื่นมาจองซ้ำในเสี้ยววินาทีเดียวกัน ระบบจะเห็นสติกเกอร์นี้แล้วบอกว่า "ที่นี่มีคนจองแล้วจ้า"
-4.  **MongoDB (The Ledger)**: เหมือน **"สมุดบัญชีร้าน"** เมื่อจ่ายเงินเสร็จแล้ว เราจะบันทึกข้อมูลแบบถาวรลงที่นี่ (ใคร จองที่ไหน เมื่อไหร่)
-5.  **Kafka & Email Service**: เหมือน **"แผนกเดินเอกสาร"** พอจองเสร็จ เชฟ (Backend) ไม่ต้องเสียเวลาไปส่งเมลเอง แค่ตะโกนบอก Kafka ว่า "ส่งเมลยืนยันให้ลูกค้าคนนี้ทีนะ" แล้วเชฟก็กลับไปรับออเดอร์คนอื่นต่อได้ทันที ส่วนการส่งเมลจะทำเป็นเบื้องหลังไปครับ
 
 ---
 
@@ -45,9 +39,9 @@ flowchart LR
 
 ### Frontend (Vue.js)
 
-- **Framework**: Vue 3 + Vite
-- **Styling**: TailwindCSS / Vanilla CSS (เน้นความสวยงามใข)
-- **State Management**: Pinia (จัดการ State ภายในแอป)
+- **Framework**: [Vue.js](https://vuejs.org/) Vue 3 + Vite (สำหรับสร้างหน้าเว็บ และ คอมไพล์หน้าเว็บให้ใช้งานได้อย่างรวดเร็ว)
+- **Styling**: [TailwindCSS](https://tailwindcss.com/) / Vanilla CSS (สำหรับตกแต่ง UI ต่างๆในแอปให้มีความสวยงาม)
+- **State Management**: [Pinia](https://pinia.vuejs.org/) (จัดการ State ภายในแอป)
 
 ### Deployment (Infrastructure)
 
