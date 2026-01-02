@@ -11,7 +11,7 @@
 ```mermaid
 graph TD
     User((👤 Users)) -->|WebSocket/REST| FE[🌐 Vue.js Frontend]
-    FE -->|API Context| BE[🚀 Go Backend Services]
+    FE -->|WebSocket/REST| BE[🚀 Go Backend Services]
 
     subgraph "Data & Consistency Layer"
         BE -->|SETNX| Redis[(⚡ Redis: Distributed Lock)]
