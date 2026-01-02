@@ -98,13 +98,29 @@ graph TD
 **สิ่งที่ต้องมี**: Docker & Docker Compose
 
 1.  **Clone & Start**:
+
     ```bash
     git clone https://github.com/Ho-Sittichai/movie-ticket-project.git
     cd movie-ticket-project
-    add .env to backend folder and Add GOOGLE_REDIRECT_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET for google auth
+    ```
+
+2.  **Setup Environment Variables**:
+    สร้างไฟล์ `.env` ในโฟลเดอร์ `backend` และกำหนดค่า Google OAuth ดังนี้:
+    _(Create `.env` in `backend` folder and add these variables)_
+
+    ```env
+    GOOGLE_REDIRECT_URL=http://localhost:8080/api/auth/google/callback
+    GOOGLE_CLIENT_ID=your_google_client_id
+    GOOGLE_CLIENT_SECRET=your_google_client_secret
+    ```
+
+3.  **Run Application**:
+
+    ```bash
     docker-compose up --build
     ```
-2.  **Access**:
+
+4.  **Access**:
     - Frontend (หน้าเว็บ): `http://localhost:5173`
     - Backend API: `http://localhost:8080`
     - Kafka UI (ดู Event): `http://localhost:9000`
