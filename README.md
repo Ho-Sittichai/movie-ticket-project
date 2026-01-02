@@ -10,7 +10,7 @@
 
 ```mermaid
 graph TD
-    User((👤 Users)) -->|WebSocket/REST| FE[🌐 Vue.js Frontend]
+    User((👤 Users)) -->|HTTP/HTTPS| FE[🌐 Vue.js Frontend]
     FE -->|WebSocket/REST| BE[🚀 Go Backend Services]
 
     subgraph "Data & Consistency Layer"
