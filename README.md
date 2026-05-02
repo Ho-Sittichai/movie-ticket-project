@@ -132,3 +132,14 @@ graph TD
 - **Consistency vs. Availability**: ในระบบการเงิน/การจอง เราเน้น **Strong Consistency** (ข้อมูลต้องเป๊ะ) มากกว่าความเร็วเพียงอย่างเดียว เราจึงใช้ Redis Lock + Mongo Atomic Update
 - **Seat Mapping**: ในเดโมนี้สมมติว่าเป็นผังที่นั่งแบบ Fixed เพื่อความง่ายต่อการเข้าใจ (ของจริงอาจต้องเป็น Dynamic Grid)
 - **Kafka Overhead**: สำหรับโปรเจกต์ขนาดเล็ก Kafka อาจดูใหญ่เกินความจำเป็น แต่เราใส่มาเพื่อโชว์โครงสร้างแบบ **Enterprise Scalability** และ **Event-Driven Pattern**
+
+---
+
+## 🎥 8. Example Page & Demo (ตัวอย่างหน้าเว็บและวิดีโอการใช้งาน)
+
+### ตัวอย่างหน้าเว็บ (Example Page)
+![Example Page](./picture/image.png)
+
+### วิดีโอสาธิตการใช้งาน (Demo Video)
+📺 [คลิกเพื่อดูวิดีโอการเล่นเว็บนี้เบื้องต้น](https://drive.google.com/file/d/1nkata15V6sRf88wOAEBftjIPCwlbQtjD/view?usp=drive_link)
+
